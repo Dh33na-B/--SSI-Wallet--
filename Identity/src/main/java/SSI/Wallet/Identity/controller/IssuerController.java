@@ -63,6 +63,19 @@ public class IssuerController {
         return ResponseEntity.ok(issuerService.verifyDocument(request));
     }
 
+    @GetMapping("/{issuerId}/documents/{documentId}/credential")
+    public ResponseEntity<CredentialEntity> getDocumentCredential(
+            @PathVariable UUID issuerId,
+            @PathVariable UUID documentId
+    ) {
+        return ResponseEntity.ok(issuerService.getDocumentCredential(issuerId, documentId));
+    }
+
+    @GetMapping("/{issuerId}/credentials")
+    public ResponseEntity<List<CredentialEntity>> getIssuedCredentials(@PathVariable UUID issuerId) {
+        return ResponseEntity.ok(issuerService.getIssuedCredentials(issuerId));
+    }
+
     @PostMapping("/credentials")
     public ResponseEntity<CredentialEntity> issueCredential(@RequestBody IssueCredentialRequest request) {
         return ResponseEntity.ok(issuerService.issueCredential(request));

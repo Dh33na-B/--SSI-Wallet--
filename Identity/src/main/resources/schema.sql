@@ -116,9 +116,11 @@ CREATE TABLE IF NOT EXISTS credentials (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
     issuer_id UUID REFERENCES users(id),
+    holder_id UUID REFERENCES users(id),
     credential_id VARCHAR(150) UNIQUE NOT NULL,
     vc_ipfs_cid TEXT NOT NULL,
     vc_hash VARCHAR(256) NOT NULL,
+    signature_suite VARCHAR(100),
     blockchain_tx_hash VARCHAR(256),
     revoked BOOLEAN DEFAULT FALSE,
     issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -129,6 +131,23 @@ CREATE INDEX IF NOT EXISTS idx_credentials_doc ON credentials(document_id);
 CREATE INDEX IF NOT EXISTS idx_credentials_hash ON credentials(vc_hash);
 CREATE INDEX IF NOT EXISTS idx_credentials_revoked ON credentials(revoked);
 CREATE INDEX IF NOT EXISTS idx_credentials_issuer ON credentials(issuer_id);
+ALTER TABLE IF EXISTS credentials ADD COLUMN IF NOT EXISTS holder_id UUID REFERENCES users(id);
+ALTER TABLE IF EXISTS credentials ADD COLUMN IF NOT EXISTS signature_suite VARCHAR(100);
+CREATE INDEX IF NOT EXISTS idx_credentials_holder ON credentials(holder_id);
+
+-- ===============================
+-- CREDENTIAL KEYS TABLE (Encrypted K_vc per recipient)
+-- ===============================
+CREATE TABLE IF NOT EXISTS credential_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    credential_id UUID NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
+    recipient_user_id UUID REFERENCES users(id),
+    encrypted_key TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_credential_keys_credential ON credential_keys(credential_id);
+CREATE INDEX IF NOT EXISTS idx_credential_keys_recipient ON credential_keys(recipient_user_id);
 
 -- ===============================
 -- REVOCATION HISTORY TABLE

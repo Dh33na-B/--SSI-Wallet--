@@ -296,6 +296,31 @@ a {
   gap: 14px;
 }
 
+.issuer-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.pdf-frame-wrap {
+  margin-top: 12px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f8faff;
+}
+
+.pdf-frame {
+  display: block;
+  width: 100%;
+  height: min(78vh, 980px);
+  min-height: 700px;
+  border: 0;
+  background: #fff;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -627,5 +652,20 @@ textarea {
 
   .split-grid {
     grid-template-columns: 1fr;
+  }
+
+  .issuer-review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pdf-frame {
+    height: 70vh;
+    min-height: 520px;
+  }
+}
+
+@media print {
+  .pdf-frame-wrap {
+    display: none !important;
   }
 }

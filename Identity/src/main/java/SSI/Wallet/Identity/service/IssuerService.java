@@ -27,6 +27,10 @@ public interface IssuerService {
 
     DocumentEntity verifyDocument(VerifyDocumentRequest request);
 
+    CredentialEntity getDocumentCredential(UUID issuerId, UUID documentId);
+
+    List<CredentialEntity> getIssuedCredentials(UUID issuerId);
+
     CredentialEntity issueCredential(IssueCredentialRequest request);
 
     CredentialEntity anchorCredentialHash(AnchorCredentialRequest request);

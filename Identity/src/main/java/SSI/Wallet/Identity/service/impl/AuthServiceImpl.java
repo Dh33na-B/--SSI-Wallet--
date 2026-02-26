@@ -7,6 +7,7 @@ import SSI.Wallet.Identity.model.entity.UserEntity;
 import SSI.Wallet.Identity.model.enums.UserRole;
 import SSI.Wallet.Identity.repository.AuditLogRepository;
 import SSI.Wallet.Identity.repository.CredentialRepository;
+import SSI.Wallet.Identity.repository.CredentialKeyRepository;
 import SSI.Wallet.Identity.repository.DocumentKeyRepository;
 import SSI.Wallet.Identity.repository.DocumentReviewRequestRepository;
 import SSI.Wallet.Identity.repository.DocumentRepository;
@@ -37,6 +38,7 @@ public class AuthServiceImpl implements AuthService {
     private final DocumentReviewRequestRepository documentReviewRequestRepository;
     private final DocumentTypeRepository documentTypeRepository;
     private final CredentialRepository credentialRepository;
+    private final CredentialKeyRepository credentialKeyRepository;
     private final RevocationHistoryRepository revocationHistoryRepository;
     private final ProofLogRepository proofLogRepository;
     private final AuditLogRepository auditLogRepository;
@@ -169,6 +171,8 @@ public class AuthServiceImpl implements AuthService {
 
         documentKeyRepository.clearRecipientUserByUserId(userId);
         credentialRepository.clearIssuerByUserId(userId);
+        credentialRepository.clearHolderByUserId(userId);
+        credentialKeyRepository.clearRecipientUserByUserId(userId);
         revocationHistoryRepository.clearRevokedByUserId(userId);
         proofLogRepository.clearVerifierByUserId(userId);
         auditLogRepository.clearUserByUserId(userId);

@@ -59,7 +59,7 @@ public class HolderServiceImpl implements HolderService {
     @Transactional(readOnly = true)
     public List<CredentialEntity> getHolderCredentials(UUID holderId) {
         getHolderProfile(holderId);
-        return credentialRepository.findByDocumentUserId(holderId);
+        return credentialRepository.findByHolderId(holderId);
     }
 
     @Override
@@ -233,11 +233,15 @@ public class HolderServiceImpl implements HolderService {
         CredentialEntity credential = credentialRepository.findByCredentialId(request.credentialId())
                 .orElseThrow(() -> new IllegalArgumentException("Credential not found: " + request.credentialId()));
 
-        if (credential.getDocument() == null || credential.getDocument().getUser() == null) {
+        UserEntity credentialHolder = credential.getHolder();
+        if (credentialHolder == null && credential.getDocument() != null) {
+            credentialHolder = credential.getDocument().getUser();
+        }
+        if (credentialHolder == null) {
             throw new IllegalArgumentException("Credential is not linked to a holder-owned document.");
         }
 
-        if (!credential.getDocument().getUser().getId().equals(holder.getId())) {
+        if (!credentialHolder.getId().equals(holder.getId())) {
             throw new IllegalArgumentException("Holder does not own credential: " + request.credentialId());
         }
 

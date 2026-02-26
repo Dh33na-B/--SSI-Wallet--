@@ -33,7 +33,6 @@ export const ROLE_MENUS = {
   ISSUER: [
     { label: "Dashboard", path: "/issuer/dashboard" },
     { label: "Submitted Documents", path: "/issuer/submissions" },
-    { label: "Create VC", path: "/issuer/credentials/new" },
     { label: "Issued Credentials", path: "/issuer/credentials" },
     { label: "Anchoring", path: "/issuer/anchoring" },
     { label: "Revocations", path: "/issuer/revocations" },

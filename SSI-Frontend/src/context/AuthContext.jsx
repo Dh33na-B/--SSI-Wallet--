@@ -134,11 +134,13 @@ export function AuthProvider({ children }) {
         });
 
         let encryptionPublicKey = "";
-        if (String(selectedRole || "").toUpperCase() === "ISSUER") {
+        try {
           encryptionPublicKey = await window.ethereum.request({
             method: "eth_getEncryptionPublicKey",
             params: [walletAddress]
           });
+        } catch {
+          // Some wallets block this method; backend still allows login without encryption key.
         }
 
         const response = await fetch(`${API_BASE_URL}/api/auth/metamask/login`, {

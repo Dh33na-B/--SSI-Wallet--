@@ -35,7 +35,8 @@ import org.hibernate.annotations.CreationTimestamp;
                 @Index(name = "idx_credentials_doc", columnList = "document_id"),
                 @Index(name = "idx_credentials_hash", columnList = "vc_hash"),
                 @Index(name = "idx_credentials_revoked", columnList = "revoked"),
-                @Index(name = "idx_credentials_issuer", columnList = "issuer_id")
+                @Index(name = "idx_credentials_issuer", columnList = "issuer_id"),
+                @Index(name = "idx_credentials_holder", columnList = "holder_id")
         },
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_credentials_credential_id", columnNames = "credential_id")
@@ -62,6 +63,13 @@ public class CredentialEntity {
     )
     private UserEntity issuer;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(
+            name = "holder_id",
+            foreignKey = @ForeignKey(name = "fk_credentials_holder")
+    )
+    private UserEntity holder;
+
     @Column(name = "credential_id", length = 150, nullable = false, unique = true)
     private String credentialId;
 
@@ -70,6 +78,9 @@ public class CredentialEntity {
 
     @Column(name = "vc_hash", length = 256, nullable = false)
     private String vcHash;
+
+    @Column(name = "signature_suite", length = 100)
+    private String signatureSuite;
 
     @Column(name = "blockchain_tx_hash", length = 256)
     private String blockchainTxHash;

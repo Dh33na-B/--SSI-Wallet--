@@ -13,15 +13,27 @@ public interface CredentialRepository extends JpaRepository<CredentialEntity, UU
 
     Optional<CredentialEntity> findByCredentialId(String credentialId);
 
+    Optional<CredentialEntity> findTopByDocumentIdOrderByIssuedAtDesc(UUID documentId);
+
+    boolean existsByDocumentId(UUID documentId);
+
     List<CredentialEntity> findByDocumentUserId(UUID userId);
 
+    List<CredentialEntity> findByHolderId(UUID holderId);
+
     List<CredentialEntity> findByIssuerId(UUID issuerId);
+
+    List<CredentialEntity> findByIssuerIdOrderByIssuedAtDesc(UUID issuerId);
 
     List<CredentialEntity> findByRevoked(Boolean revoked);
 
     @Modifying
     @Query("update CredentialEntity c set c.issuer = null where c.issuer.id = :userId")
     int clearIssuerByUserId(@Param("userId") UUID userId);
+
+    @Modifying
+    @Query("update CredentialEntity c set c.holder = null where c.holder.id = :userId")
+    int clearHolderByUserId(@Param("userId") UUID userId);
 
     @Modifying
     @Query("update CredentialEntity c set c.document = null where c.document.user.id = :userId")

@@ -6,6 +6,7 @@ public record IssuerDocumentAccessResponse(
         UUID documentId,
         UUID holderId,
         String holderWallet,
+        String holderEncryptionPublicKey,
         String fileName,
         String documentType,
         String ipfsCid,

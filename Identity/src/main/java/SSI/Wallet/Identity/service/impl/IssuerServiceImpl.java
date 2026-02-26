@@ -11,6 +11,7 @@ import SSI.Wallet.Identity.dto.issuer.RevokeCredentialRequest;
 import SSI.Wallet.Identity.dto.issuer.VerifyDocumentRequest;
 import SSI.Wallet.Identity.model.entity.AuditLogEntity;
 import SSI.Wallet.Identity.model.entity.CredentialEntity;
+import SSI.Wallet.Identity.model.entity.CredentialKeyEntity;
 import SSI.Wallet.Identity.model.entity.DocumentEntity;
 import SSI.Wallet.Identity.model.entity.DocumentKeyEntity;
 import SSI.Wallet.Identity.model.entity.DocumentReviewRequestEntity;
@@ -21,6 +22,7 @@ import SSI.Wallet.Identity.model.enums.DocumentStatus;
 import SSI.Wallet.Identity.model.enums.UserRole;
 import SSI.Wallet.Identity.repository.AuditLogRepository;
 import SSI.Wallet.Identity.repository.CredentialRepository;
+import SSI.Wallet.Identity.repository.CredentialKeyRepository;
 import SSI.Wallet.Identity.repository.DocumentKeyRepository;
 import SSI.Wallet.Identity.repository.DocumentReviewRequestRepository;
 import SSI.Wallet.Identity.repository.DocumentRepository;
@@ -49,6 +51,7 @@ public class IssuerServiceImpl implements IssuerService {
     private final DocumentReviewRequestRepository documentReviewRequestRepository;
     private final DocumentKeyRepository documentKeyRepository;
     private final CredentialRepository credentialRepository;
+    private final CredentialKeyRepository credentialKeyRepository;
     private final RevocationHistoryRepository revocationHistoryRepository;
     private final AuditLogRepository auditLogRepository;
     private final HttpClient httpClient = HttpClient.newHttpClient();
@@ -136,6 +139,7 @@ public class IssuerServiceImpl implements IssuerService {
                 document.getId(),
                 document.getUser().getId(),
                 document.getUser().getWalletAddress(),
+                document.getUser().getEncryptionPublicKey(),
                 document.getFileName(),
                 document.getDocumentType() == null ? null : document.getDocumentType().getName(),
                 document.getIpfsCid(),
@@ -227,23 +231,60 @@ public class IssuerServiceImpl implements IssuerService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public CredentialEntity getDocumentCredential(UUID issuerId, UUID documentId) {
+        UserEntity issuer = getIssuer(issuerId);
+        CredentialEntity credential = credentialRepository.findTopByDocumentIdOrderByIssuedAtDesc(documentId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Credential not found for document: " + documentId
+                ));
+        if (credential.getIssuer() != null && !issuer.getId().equals(credential.getIssuer().getId())) {
+            throw new IllegalArgumentException("Issuer does not own credential for document: " + documentId);
+        }
+        return credential;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CredentialEntity> getIssuedCredentials(UUID issuerId) {
+        UserEntity issuer = getIssuer(issuerId);
+        return credentialRepository.findByIssuerIdOrderByIssuedAtDesc(issuer.getId());
+    }
+
+    @Override
     public CredentialEntity issueCredential(IssueCredentialRequest request) {
+        validateIssueCredentialRequest(request);
         UserEntity issuer = getIssuer(request.issuerId());
         DocumentEntity document = documentRepository.findById(request.documentId())
                 .orElseThrow(() -> new IllegalArgumentException("Document not found: " + request.documentId()));
+        UserEntity holder = document.getUser();
 
         if (!DocumentStatus.VERIFIED.equals(document.getStatus())) {
             throw new IllegalArgumentException("Credential can be issued only for VERIFIED documents.");
+        }
+        if (credentialRepository.existsByDocumentId(document.getId())) {
+            throw new IllegalArgumentException("A credential is already issued for this document.");
         }
 
         CredentialEntity created = credentialRepository.save(
                 CredentialEntity.builder()
                         .document(document)
                         .issuer(issuer)
+                        .holder(holder)
                         .credentialId(request.credentialId())
-                        .vcIpfsCid(request.vcIpfsCid())
-                        .vcHash(request.vcHash())
+                        .vcIpfsCid(request.vcIpfsCid().trim())
+                        .vcHash(request.vcHash().trim())
+                        .signatureSuite(request.signatureSuite().trim())
+                        .blockchainTxHash(request.blockchainTxHash().trim())
                         .expiresAt(request.expiresAt())
+                        .build()
+        );
+
+        credentialKeyRepository.save(
+                CredentialKeyEntity.builder()
+                        .credential(created)
+                        .recipientUser(holder)
+                        .encryptedKey(request.holderEncryptedKey().trim())
                         .build()
         );
 
@@ -375,6 +416,39 @@ public class IssuerServiceImpl implements IssuerService {
         }
         if (request.documentId() == null) {
             throw new IllegalArgumentException("documentId is required.");
+        }
+    }
+
+    private void validateIssueCredentialRequest(IssueCredentialRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Issue credential request is required.");
+        }
+        if (request.issuerId() == null) {
+            throw new IllegalArgumentException("issuerId is required.");
+        }
+        if (request.documentId() == null) {
+            throw new IllegalArgumentException("documentId is required.");
+        }
+        if (isBlank(request.credentialId())) {
+            throw new IllegalArgumentException("credentialId is required.");
+        }
+        if (isBlank(request.vcIpfsCid())) {
+            throw new IllegalArgumentException("vcIpfsCid is required.");
+        }
+        if (isBlank(request.vcHash())) {
+            throw new IllegalArgumentException("vcHash is required.");
+        }
+        if (isBlank(request.signatureSuite())) {
+            throw new IllegalArgumentException("signatureSuite is required.");
+        }
+        if (!"BbsBlsSignature2020".equalsIgnoreCase(request.signatureSuite().trim())) {
+            throw new IllegalArgumentException("Only BbsBlsSignature2020 signatureSuite is supported.");
+        }
+        if (isBlank(request.blockchainTxHash())) {
+            throw new IllegalArgumentException("blockchainTxHash is required.");
+        }
+        if (isBlank(request.holderEncryptedKey())) {
+            throw new IllegalArgumentException("holderEncryptedKey is required.");
         }
     }
 
