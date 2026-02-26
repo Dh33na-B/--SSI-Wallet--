@@ -7,6 +7,7 @@ public record MetaMaskLoginRequest(
         String message,
         String chainId,
         String nonce,
-        String loginAt
+        String loginAt,
+        String encryptionPublicKey
 ) {
 }

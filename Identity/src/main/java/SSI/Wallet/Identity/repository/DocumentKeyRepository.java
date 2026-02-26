@@ -2,6 +2,7 @@ package SSI.Wallet.Identity.repository;
 
 import SSI.Wallet.Identity.model.entity.DocumentKeyEntity;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -13,6 +14,11 @@ public interface DocumentKeyRepository extends JpaRepository<DocumentKeyEntity, 
     List<DocumentKeyEntity> findByDocumentId(UUID documentId);
 
     List<DocumentKeyEntity> findByRecipientUserId(UUID recipientUserId);
+
+    Optional<DocumentKeyEntity> findTopByDocumentIdAndRecipientUserIdOrderByCreatedAtDesc(
+            UUID documentId,
+            UUID recipientUserId
+    );
 
     long deleteByDocumentUserId(UUID userId);
 

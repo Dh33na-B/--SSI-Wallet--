@@ -72,6 +72,7 @@ export default function App() {
         <Route path="wallet" element={<HolderWalletPage />} />
         <Route path="documents" element={<HolderDocumentsPage />} />
         <Route path="credentials" element={<HolderCredentialsPage />} />
+        <Route path="verification-requests" element={<HolderProofRequestsPage />} />
         <Route path="proof-requests" element={<HolderProofRequestsPage />} />
         <Route path="proof-builder" element={<HolderProofBuilderPage />} />
         <Route path="revocations" element={<HolderRevocationsPage />} />

@@ -4,23 +4,32 @@ import SSI.Wallet.Identity.dto.holder.AccessControlRequest;
 import SSI.Wallet.Identity.dto.holder.CreateDocumentTypeRequest;
 import SSI.Wallet.Identity.dto.holder.DocumentTypeResponse;
 import SSI.Wallet.Identity.dto.holder.HolderDocumentResponse;
+import SSI.Wallet.Identity.dto.holder.HolderReviewRequestResponse;
+import SSI.Wallet.Identity.dto.holder.IssuerEncryptionKeyResponse;
+import SSI.Wallet.Identity.dto.holder.RespondReviewRequest;
 import SSI.Wallet.Identity.dto.holder.ShareProofRequest;
 import SSI.Wallet.Identity.dto.holder.UploadDocumentRequest;
+import SSI.Wallet.Identity.dto.holder.UploadDocumentRecipientKeyRequest;
 import SSI.Wallet.Identity.model.entity.AuditLogEntity;
 import SSI.Wallet.Identity.model.entity.CredentialEntity;
 import SSI.Wallet.Identity.model.entity.DocumentEntity;
 import SSI.Wallet.Identity.model.entity.DocumentKeyEntity;
+import SSI.Wallet.Identity.model.entity.DocumentReviewRequestEntity;
 import SSI.Wallet.Identity.model.entity.DocumentTypeEntity;
 import SSI.Wallet.Identity.model.entity.UserEntity;
+import SSI.Wallet.Identity.model.enums.DocumentReviewRequestStatus;
 import SSI.Wallet.Identity.model.enums.UserRole;
 import SSI.Wallet.Identity.repository.AuditLogRepository;
 import SSI.Wallet.Identity.repository.CredentialRepository;
 import SSI.Wallet.Identity.repository.DocumentKeyRepository;
+import SSI.Wallet.Identity.repository.DocumentReviewRequestRepository;
 import SSI.Wallet.Identity.repository.DocumentRepository;
 import SSI.Wallet.Identity.repository.DocumentTypeRepository;
 import SSI.Wallet.Identity.repository.UserRepository;
 import SSI.Wallet.Identity.service.HolderService;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -35,6 +44,7 @@ public class HolderServiceImpl implements HolderService {
     private final DocumentRepository documentRepository;
     private final CredentialRepository credentialRepository;
     private final DocumentKeyRepository documentKeyRepository;
+    private final DocumentReviewRequestRepository documentReviewRequestRepository;
     private final DocumentTypeRepository documentTypeRepository;
     private final AuditLogRepository auditLogRepository;
 
@@ -66,6 +76,19 @@ public class HolderServiceImpl implements HolderService {
     public List<DocumentTypeResponse> getDocumentTypes() {
         return documentTypeRepository.findAllByOrderByNameAsc().stream()
                 .map(type -> new DocumentTypeResponse(type.getId(), type.getName()))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IssuerEncryptionKeyResponse> getAvailableIssuers() {
+        return userRepository.findByRoleAndEncryptionPublicKeyIsNotNullOrderByCreatedAtAsc(UserRole.ISSUER).stream()
+                .filter(issuer -> !isBlank(issuer.getEncryptionPublicKey()))
+                .map(issuer -> new IssuerEncryptionKeyResponse(
+                        issuer.getId(),
+                        issuer.getWalletAddress(),
+                        issuer.getEncryptionPublicKey().trim()
+                ))
                 .toList();
     }
 
@@ -102,16 +125,80 @@ public class HolderServiceImpl implements HolderService {
                         .build()
         );
 
-        documentKeyRepository.save(
-                DocumentKeyEntity.builder()
-                        .document(document)
-                        .recipientUser(holder)
-                        .encryptedKey(request.encryptedKey().trim())
-                        .build()
-        );
+        saveEncryptedKey(document, holder, request.encryptedKey().trim());
+        Set<UUID> savedRecipientIds = new HashSet<>();
+        savedRecipientIds.add(holder.getId());
+
+        if (request.recipientKeys() != null) {
+            for (UploadDocumentRecipientKeyRequest recipientKey : request.recipientKeys()) {
+                UUID recipientId = recipientKey.recipientUserId();
+                if (savedRecipientIds.contains(recipientId)) {
+                    continue;
+                }
+
+                UserEntity recipient = userRepository.findByIdAndRole(recipientId, UserRole.ISSUER)
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "Recipient issuer not found: " + recipientId
+                        ));
+
+                saveEncryptedKey(document, recipient, recipientKey.encryptedKey().trim());
+                savedRecipientIds.add(recipientId);
+            }
+        }
 
         createAuditLog(holder, "UPLOAD_DOCUMENT", "DOCUMENT", document.getId().toString());
         return toDocumentResponse(document);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<HolderReviewRequestResponse> getHolderReviewRequests(UUID holderId) {
+        UserEntity holder = getHolderProfile(holderId);
+        return documentReviewRequestRepository.findByHolderIdOrderByUpdatedAtDesc(holder.getId()).stream()
+                .map(request -> toHolderReviewRequestResponse(request, holder.getId()))
+                .toList();
+    }
+
+    @Override
+    public HolderReviewRequestResponse respondReviewRequest(RespondReviewRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Review decision request is required.");
+        }
+
+        UserEntity holder = getHolderProfile(request.holderId());
+        DocumentReviewRequestEntity reviewRequest = documentReviewRequestRepository
+                .findByIdAndHolderId(request.requestId(), holder.getId())
+                .orElseThrow(() -> new IllegalArgumentException("Review request not found: " + request.requestId()));
+
+        if (!DocumentReviewRequestStatus.REQUESTED.equals(reviewRequest.getStatus())) {
+            throw new IllegalArgumentException(
+                    "Review request is not pending holder action: " + reviewRequest.getId()
+            );
+        }
+
+        if (request.approved()) {
+            if (isBlank(request.encryptedKeyForIssuer())) {
+                throw new IllegalArgumentException("encryptedKeyForIssuer is required when approved=true.");
+            }
+            documentKeyRepository.save(
+                    DocumentKeyEntity.builder()
+                            .document(reviewRequest.getDocument())
+                            .recipientUser(reviewRequest.getIssuer())
+                            .encryptedKey(request.encryptedKeyForIssuer().trim())
+                            .build()
+            );
+            reviewRequest.setStatus(DocumentReviewRequestStatus.HOLDER_APPROVED);
+        } else {
+            reviewRequest.setStatus(DocumentReviewRequestStatus.HOLDER_REJECTED);
+        }
+
+        if (!isBlank(request.note())) {
+            reviewRequest.setHolderNote(request.note().trim());
+        }
+
+        DocumentReviewRequestEntity saved = documentReviewRequestRepository.save(reviewRequest);
+        createAuditLog(holder, "DOCUMENT_REVIEW_RESPONSE", "DOCUMENT", saved.getDocument().getId().toString());
+        return toHolderReviewRequestResponse(saved, holder.getId());
     }
 
     @Override
@@ -195,6 +282,35 @@ public class HolderServiceImpl implements HolderService {
         );
     }
 
+    private HolderReviewRequestResponse toHolderReviewRequestResponse(
+            DocumentReviewRequestEntity request,
+            UUID holderId
+    ) {
+        String documentType = request.getDocument().getDocumentType() == null
+                ? null
+                : request.getDocument().getDocumentType().getName();
+        String holderEncryptedKey = documentKeyRepository
+                .findTopByDocumentIdAndRecipientUserIdOrderByCreatedAtDesc(request.getDocument().getId(), holderId)
+                .map(DocumentKeyEntity::getEncryptedKey)
+                .orElse(null);
+
+        return new HolderReviewRequestResponse(
+                request.getId(),
+                request.getDocument().getId(),
+                request.getDocument().getFileName(),
+                documentType,
+                request.getIssuer().getId(),
+                request.getIssuer().getWalletAddress(),
+                firstNonBlank(request.getIssuerEncryptionPublicKey(), request.getIssuer().getEncryptionPublicKey()),
+                request.getStatus().name(),
+                request.getIssuerNote(),
+                request.getHolderNote(),
+                holderEncryptedKey,
+                request.getCreatedAt(),
+                request.getUpdatedAt()
+        );
+    }
+
     private void validateUploadRequest(UploadDocumentRequest request) {
         if (isBlank(request.fileName())) {
             throw new IllegalArgumentException("fileName is required.");
@@ -208,6 +324,32 @@ public class HolderServiceImpl implements HolderService {
         if (isBlank(request.encryptedKey())) {
             throw new IllegalArgumentException("encryptedKey is required.");
         }
+        if (request.recipientKeys() == null) {
+            return;
+        }
+        for (UploadDocumentRecipientKeyRequest recipientKey : request.recipientKeys()) {
+            if (recipientKey == null) {
+                throw new IllegalArgumentException("recipientKeys contains an empty item.");
+            }
+            if (recipientKey.recipientUserId() == null) {
+                throw new IllegalArgumentException("recipientUserId is required for each recipient key.");
+            }
+            if (isBlank(recipientKey.encryptedKey())) {
+                throw new IllegalArgumentException(
+                        "encryptedKey is required for recipient " + recipientKey.recipientUserId()
+                );
+            }
+        }
+    }
+
+    private void saveEncryptedKey(DocumentEntity document, UserEntity recipient, String encryptedKey) {
+        documentKeyRepository.save(
+                DocumentKeyEntity.builder()
+                        .document(document)
+                        .recipientUser(recipient)
+                        .encryptedKey(encryptedKey)
+                        .build()
+        );
     }
 
     private String normalizeTypeName(String rawName) {
@@ -223,6 +365,16 @@ public class HolderServiceImpl implements HolderService {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (!isBlank(first)) {
+            return first.trim();
+        }
+        if (!isBlank(second)) {
+            return second.trim();
+        }
+        return null;
     }
 
     private void createAuditLog(UserEntity actor, String actionType, String entityType, String entityId) {

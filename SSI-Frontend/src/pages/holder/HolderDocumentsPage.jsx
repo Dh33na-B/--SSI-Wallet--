@@ -1,5 +1,6 @@
 import { base64, utf8 } from "@scure/base";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import nacl from "tweetnacl";
 import Badge from "../../components/ui/Badge";
 import DataTable from "../../components/ui/DataTable";
@@ -30,6 +31,11 @@ const bytesToBase64 = (bytes) => {
   return window.btoa(binary);
 };
 
+const bytesToHex = (bytes) =>
+  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+const utf8ToHex = (value) => bytesToHex(new TextEncoder().encode(value));
+
 const arrayBufferToBase64 = (buffer) => bytesToBase64(new Uint8Array(buffer));
 
 const normalizeApiError = async (response, fallbackMessage) => {
@@ -54,9 +60,12 @@ const formatDateTime = (value) => {
 
 export default function HolderDocumentsPage() {
   const { userId, walletAddress, refreshAuthSession } = useAuth();
+  const navigate = useNavigate();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [documentTypes, setDocumentTypes] = useState([]);
+  const [issuers, setIssuers] = useState([]);
+  const [pendingReviewCount, setPendingReviewCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -65,7 +74,17 @@ export default function HolderDocumentsPage() {
 
   const [selectedTypeId, setSelectedTypeId] = useState("");
   const [newTypeName, setNewTypeName] = useState("");
+  const [selectedIssuerId, setSelectedIssuerId] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
+  const [reuploadSource, setReuploadSource] = useState(null);
+
+  const resolveHolderId = useCallback(async () => {
+    let effectiveHolderId = userId;
+    if (!effectiveHolderId) {
+      effectiveHolderId = await refreshAuthSession();
+    }
+    return effectiveHolderId || "";
+  }, [userId, refreshAuthSession]);
 
   const fetchDocuments = useCallback(async () => {
     const fetchByHolderId = async (holderId) => {
@@ -80,10 +99,7 @@ export default function HolderDocumentsPage() {
       setDocuments(Array.isArray(data) ? data : []);
     };
 
-    let effectiveHolderId = userId;
-    if (!effectiveHolderId) {
-      effectiveHolderId = await refreshAuthSession();
-    }
+    const effectiveHolderId = await resolveHolderId();
 
     if (!effectiveHolderId) {
       setDocuments([]);
@@ -107,7 +123,24 @@ export default function HolderDocumentsPage() {
 
       await fetchByHolderId(refreshedHolderId);
     }
-  }, [userId, refreshAuthSession]);
+  }, [resolveHolderId, refreshAuthSession]);
+
+  const fetchReviewRequestCount = useCallback(async () => {
+    const holderId = await resolveHolderId();
+    if (!holderId) {
+      setPendingReviewCount(0);
+      return;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/holder/${holderId}/review-requests`);
+    if (!response.ok) {
+      throw new Error(await normalizeApiError(response, "Could not load verification requests."));
+    }
+    const data = await response.json();
+    const rows = Array.isArray(data) ? data : [];
+    const pending = rows.filter((item) => item?.status === "REQUESTED").length;
+    setPendingReviewCount(pending);
+  }, [resolveHolderId]);
 
   const fetchDocumentTypes = useCallback(async () => {
     const response = await fetch(`${API_BASE_URL}/api/holder/document-types`);
@@ -118,20 +151,26 @@ export default function HolderDocumentsPage() {
     setDocumentTypes(Array.isArray(data) ? data : []);
   }, []);
 
-  const loadInitialData = useCallback(async () => {
-    if (!userId) {
-      return;
+  const fetchIssuers = useCallback(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/holder/issuers`);
+    if (!response.ok) {
+      throw new Error(await normalizeApiError(response, "Could not load issuers."));
     }
+    const data = await response.json();
+    setIssuers(Array.isArray(data) ? data : []);
+  }, []);
+
+  const loadInitialData = useCallback(async () => {
     setIsLoading(true);
     setLoadError("");
     try {
-      await Promise.all([fetchDocuments(), fetchDocumentTypes()]);
+      await Promise.all([fetchDocuments(), fetchDocumentTypes(), fetchIssuers(), fetchReviewRequestCount()]);
     } catch (error) {
       setLoadError(error.message || "Failed to load document data.");
     } finally {
       setIsLoading(false);
     }
-  }, [fetchDocuments, fetchDocumentTypes, userId]);
+  }, [fetchDocuments, fetchDocumentTypes, fetchIssuers, fetchReviewRequestCount]);
 
   useEffect(() => {
     loadInitialData();
@@ -141,10 +180,58 @@ export default function HolderDocumentsPage() {
     if (!uploadOpen) {
       setSelectedTypeId("");
       setNewTypeName("");
+      setSelectedIssuerId("");
       setSelectedFile(null);
       setUploadError("");
+      setReuploadSource(null);
     }
   }, [uploadOpen]);
+
+  const openUploadModal = () => {
+    setUploadSuccess("");
+    setLoadError("");
+    setUploadError("");
+    setReuploadSource(null);
+    setSelectedTypeId("");
+    setNewTypeName("");
+    setSelectedIssuerId("");
+    setSelectedFile(null);
+    setUploadOpen(true);
+  };
+
+  const openReuploadModal = useCallback(
+    (document) => {
+      setUploadSuccess("");
+      setLoadError("");
+      setUploadError("");
+      setSelectedFile(null);
+      setReuploadSource(document);
+      setSelectedIssuerId("");
+
+      const documentTypeName = String(document?.documentType || "").trim();
+      if (!documentTypeName) {
+        setSelectedTypeId("");
+        setNewTypeName("");
+        setUploadOpen(true);
+        return;
+      }
+
+      const matchedType = documentTypes.find(
+        (type) => String(type?.name || "").toLowerCase() === documentTypeName.toLowerCase()
+      );
+
+      if (matchedType?.id) {
+        setSelectedTypeId(matchedType.id);
+        setNewTypeName("");
+      } else {
+        setSelectedTypeId(NEW_TYPE_OPTION);
+        setNewTypeName(documentTypeName);
+      }
+
+      setUploadOpen(true);
+    },
+    [documentTypes]
+  );
 
   const columns = useMemo(
     () => [
@@ -153,9 +240,21 @@ export default function HolderDocumentsPage() {
       { key: "documentType", header: "Type", render: (value) => value || "-" },
       { key: "uploadedAt", header: "Uploaded On", render: (value) => formatDateTime(value) },
       { key: "ipfsCid", header: "IPFS CID", render: (value) => shortText(value, 24) },
-      { key: "status", header: "Status", render: (value) => <Badge value={value} /> }
+      { key: "status", header: "Status", render: (value) => <Badge value={value} /> },
+      {
+        key: "actions",
+        header: "Actions",
+        render: (_, row) =>
+          row.status === "REJECTED" ? (
+            <button type="button" className="btn btn--secondary" onClick={() => openReuploadModal(row)}>
+              Re-upload
+            </button>
+          ) : (
+            <span className="login-muted">-</span>
+          )
+      }
     ],
-    []
+    [openReuploadModal]
   );
 
   const uploadToPinata = async (encryptedBlob, originalFileName) => {
@@ -229,16 +328,7 @@ export default function HolderDocumentsPage() {
     };
   };
 
-  const encryptDocumentKeyWithWallet = async (wallet, keyBase64) => {
-    if (!window.ethereum?.request) {
-      throw new Error("MetaMask extension is required for key encryption.");
-    }
-
-    const encryptionPublicKey = await window.ethereum.request({
-      method: "eth_getEncryptionPublicKey",
-      params: [wallet]
-    });
-
+  const encryptDocumentKeyWithPublicKey = (encryptionPublicKey, keyBase64) => {
     const publicKeyBytes = base64.decode(encryptionPublicKey);
     const ephemeralKeyPair = nacl.box.keyPair();
     const nonce = nacl.randomBytes(nacl.box.nonceLength);
@@ -252,7 +342,19 @@ export default function HolderDocumentsPage() {
       ciphertext: base64.encode(ciphertext)
     };
 
-    return JSON.stringify(encryptedPayload);
+    return utf8ToHex(JSON.stringify(encryptedPayload));
+  };
+
+  const encryptDocumentKeyWithWallet = async (wallet, keyBase64) => {
+    if (!window.ethereum?.request) {
+      throw new Error("MetaMask extension is required for key encryption.");
+    }
+
+    const encryptionPublicKey = await window.ethereum.request({
+      method: "eth_getEncryptionPublicKey",
+      params: [wallet]
+    });
+    return encryptDocumentKeyWithPublicKey(encryptionPublicKey, keyBase64);
   };
 
   const onFileChange = (event) => {
@@ -261,10 +363,7 @@ export default function HolderDocumentsPage() {
   };
 
   const onUpload = async () => {
-    let holderId = userId || "";
-    if (!holderId) {
-      holderId = await refreshAuthSession();
-    }
+    const holderId = await resolveHolderId();
     if (!holderId) {
       setUploadError("Login required before upload.");
       return;
@@ -294,14 +393,27 @@ export default function HolderDocumentsPage() {
       setUploadError("Enter the new document type name.");
       return;
     }
+    if (!selectedIssuerId) {
+      setUploadError("Select the issuer allowed to verify this document.");
+      return;
+    }
 
     setIsUploading(true);
     setUploadError("");
     setUploadSuccess("");
 
     try {
+      const selectedIssuer = issuers.find((issuer) => issuer.issuerId === selectedIssuerId);
+      if (!selectedIssuer?.issuerId || !selectedIssuer?.encryptionPublicKey) {
+        throw new Error("Selected issuer does not have a valid encryption public key.");
+      }
+
       const { encryptedBlob, keyBase64, ivBase64 } = await encryptDocument(selectedFile);
-      const encryptedKey = await encryptDocumentKeyWithWallet(walletAddress, keyBase64);
+      const encryptedKeyForHolder = await encryptDocumentKeyWithWallet(walletAddress, keyBase64);
+      const encryptedKeyForIssuer = encryptDocumentKeyWithPublicKey(
+        selectedIssuer.encryptionPublicKey,
+        keyBase64
+      );
       const ipfsCid = await uploadToPinata(encryptedBlob, selectedFile.name);
 
       const response = await fetch(`${API_BASE_URL}/api/holder/documents/upload`, {
@@ -316,7 +428,13 @@ export default function HolderDocumentsPage() {
           fileName: selectedFile.name,
           ipfsCid,
           encryptionIv: ivBase64,
-          encryptedKey
+          encryptedKey: encryptedKeyForHolder,
+          recipientKeys: [
+            {
+              recipientUserId: selectedIssuer.issuerId,
+              encryptedKey: encryptedKeyForIssuer
+            }
+          ]
         })
       });
 
@@ -324,8 +442,12 @@ export default function HolderDocumentsPage() {
         throw new Error(await normalizeApiError(response, "Could not save uploaded document."));
       }
 
-      await Promise.all([fetchDocuments(), fetchDocumentTypes()]);
-      setUploadSuccess("Encrypted document uploaded to IPFS and saved successfully.");
+      await Promise.all([fetchDocuments(), fetchDocumentTypes(), fetchReviewRequestCount()]);
+      setUploadSuccess(
+        reuploadSource
+          ? `Replacement uploaded for rejected document: ${reuploadSource.fileName || reuploadSource.id}.`
+          : "Encrypted document uploaded to IPFS and saved successfully."
+      );
       setUploadOpen(false);
     } catch (error) {
       setUploadError(error.message || "Document upload failed.");
@@ -338,6 +460,7 @@ export default function HolderDocumentsPage() {
     isUploading ||
     !selectedFile ||
     !selectedTypeId ||
+    !selectedIssuerId ||
     (selectedTypeId === NEW_TYPE_OPTION && !newTypeName.trim());
 
   return (
@@ -346,16 +469,42 @@ export default function HolderDocumentsPage() {
         title="Documents"
         subtitle="Encrypted document uploads and issuer verification statuses."
         actions={
-          <button type="button" className="btn btn--primary" onClick={() => setUploadOpen(true)}>
-            Upload PDF
-          </button>
+          <div className="action-row">
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={() => navigate("/holder/verification-requests")}
+            >
+              Verification Requests ({pendingReviewCount})
+            </button>
+            <button type="button" className="btn btn--primary" onClick={openUploadModal}>
+              Upload PDF
+            </button>
+          </div>
         }
       />
 
       <SectionCard title="Upload New Document" subtitle="Encrypted before IPFS storage">
         <div className="upload-box">
           PDF is encrypted client-side using AES-256-GCM. The symmetric key is encrypted with your
-          MetaMask public key before metadata is stored.
+          MetaMask public key and with the selected issuer public key before metadata is stored.
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Verification Access Requests" subtitle="Approve request to allow decryption for verification">
+        <div className="upload-box">
+          {pendingReviewCount > 0
+            ? `You have ${pendingReviewCount} pending approval request(s).`
+            : "No pending requests right now."}
+        </div>
+        <div className="action-row">
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => navigate("/holder/verification-requests")}
+          >
+            Open Verification Requests
+          </button>
         </div>
       </SectionCard>
 
@@ -368,7 +517,7 @@ export default function HolderDocumentsPage() {
 
       <Modal
         open={uploadOpen}
-        title="Upload Encrypted Document"
+        title={reuploadSource ? "Re-upload Rejected Document" : "Upload Encrypted Document"}
         onClose={() => setUploadOpen(false)}
         footer={
           <>
@@ -387,6 +536,13 @@ export default function HolderDocumentsPage() {
         }
       >
         <div className="form-grid">
+          {reuploadSource ? (
+            <div className="upload-box">
+              Re-uploading <strong>{reuploadSource.fileName || "selected document"}</strong>. The old CID
+              is already removed after rejection.
+            </div>
+          ) : null}
+
           <label className="field">
             <span>Document Type</span>
             <select
@@ -403,6 +559,25 @@ export default function HolderDocumentsPage() {
               <option value={NEW_TYPE_OPTION}>+ Add new type</option>
             </select>
           </label>
+
+          <label className="field">
+            <span>Authorized Issuer</span>
+            <select
+              value={selectedIssuerId}
+              onChange={(event) => setSelectedIssuerId(event.target.value)}
+              disabled={isUploading}
+            >
+              <option value="">Select issuer</option>
+              {issuers.map((issuer) => (
+                <option key={issuer.issuerId} value={issuer.issuerId}>
+                  {shortText(issuer.walletAddress, 26)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!issuers.length ? (
+            <p className="field-help">No issuer with encryption key is registered yet.</p>
+          ) : null}
 
           {selectedTypeId === NEW_TYPE_OPTION ? (
             <label className="field">

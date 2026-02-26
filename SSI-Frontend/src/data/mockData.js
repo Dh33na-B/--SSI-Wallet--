@@ -67,16 +67,14 @@ export const issuerSubmissions = [
     holderWallet: "0x15a...90c2",
     documentType: "Passport",
     submittedAt: "2026-02-20 09:00",
-    status: "UNDER_REVIEW",
-    riskFlag: "LOW"
+    status: "UNDER_REVIEW"
   },
   {
     id: "DOC-1044",
     holderWallet: "0x22f...77e0",
     documentType: "Degree",
     submittedAt: "2026-02-24 14:40",
-    status: "PENDING",
-    riskFlag: "MEDIUM"
+    status: "PENDING"
   }
 ];
 

@@ -9,11 +9,13 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     wallet_address VARCHAR(100) UNIQUE NOT NULL,
+    encryption_public_key TEXT,
     role VARCHAR(20) NOT NULL CHECK (role IN ('USER', 'ISSUER', 'VERIFIER', 'AUDITOR')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS encryption_public_key TEXT;
 
 -- ===============================
 -- DOCUMENT TYPES TABLE
@@ -62,6 +64,36 @@ ALTER TABLE IF EXISTS documents ADD COLUMN IF NOT EXISTS document_type_id UUID;
 ALTER TABLE IF EXISTS documents ADD COLUMN IF NOT EXISTS file_name VARCHAR(255);
 ALTER TABLE IF EXISTS documents ADD COLUMN IF NOT EXISTS encryption_iv TEXT;
 CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(document_type_id);
+
+-- ===============================
+-- DOCUMENT REVIEW REQUESTS (Issuer <-> Holder Notifications)
+-- ===============================
+CREATE TABLE IF NOT EXISTS document_review_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    holder_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    issuer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(50) NOT NULL DEFAULT 'REQUESTED'
+        CHECK (status IN (
+            'REQUESTED',
+            'HOLDER_APPROVED',
+            'HOLDER_REJECTED',
+            'ISSUER_ACCEPTED',
+            'ISSUER_REJECTED_REUPLOAD_REQUIRED'
+        )),
+    issuer_encryption_public_key TEXT,
+    issuer_note TEXT,
+    holder_note TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_review_document ON document_review_requests(document_id);
+CREATE INDEX IF NOT EXISTS idx_doc_review_holder ON document_review_requests(holder_id);
+CREATE INDEX IF NOT EXISTS idx_doc_review_issuer ON document_review_requests(issuer_id);
+CREATE INDEX IF NOT EXISTS idx_doc_review_status ON document_review_requests(status);
+ALTER TABLE IF EXISTS document_review_requests
+    ADD COLUMN IF NOT EXISTS issuer_encryption_public_key TEXT;
 
 -- ===============================
 -- DOCUMENT KEYS TABLE (Supports Multi-Recipient)

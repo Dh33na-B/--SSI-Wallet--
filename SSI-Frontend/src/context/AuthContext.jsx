@@ -6,6 +6,7 @@ const DEFAULT_AUTH_STATE = {
   userId: "",
   role: "",
   walletAddress: "",
+  encryptionPublicKey: "",
   walletConnected: false,
   chainId: "",
   signature: "",
@@ -45,8 +46,12 @@ const getErrorMessage = (error) => {
   if (error?.code === 4001) {
     return "You rejected the MetaMask request.";
   }
-  if (error?.message) {
-    return error.message;
+  const message = String(error?.message || "");
+  if (message.toLowerCase().includes("controller is locked")) {
+    return "MetaMask is locked. Unlock your wallet and try again.";
+  }
+  if (message) {
+    return message;
   }
   return "MetaMask login failed.";
 };
@@ -128,6 +133,14 @@ export function AuthProvider({ children }) {
           params: [message, walletAddress]
         });
 
+        let encryptionPublicKey = "";
+        if (String(selectedRole || "").toUpperCase() === "ISSUER") {
+          encryptionPublicKey = await window.ethereum.request({
+            method: "eth_getEncryptionPublicKey",
+            params: [walletAddress]
+          });
+        }
+
         const response = await fetch(`${API_BASE_URL}/api/auth/metamask/login`, {
           method: "POST",
           headers: {
@@ -140,7 +153,8 @@ export function AuthProvider({ children }) {
             message,
             chainId,
             nonce,
-            loginAt: issuedAt
+            loginAt: issuedAt,
+            encryptionPublicKey
           })
         });
 
@@ -165,6 +179,7 @@ export function AuthProvider({ children }) {
           userId: persistedUser.userId || "",
           role: uiRole,
           walletAddress: persistedUser.walletAddress || walletAddress,
+          encryptionPublicKey: encryptionPublicKey || "",
           walletConnected: true,
           chainId: chainId || "",
           signature: signature || "",
@@ -299,7 +314,8 @@ export function AuthProvider({ children }) {
           message: current.authMessage,
           chainId: current.chainId || "",
           nonce: current.nonce,
-          loginAt: current.loginAt || new Date().toISOString()
+          loginAt: current.loginAt || new Date().toISOString(),
+          encryptionPublicKey: current.encryptionPublicKey
         })
       });
 
@@ -326,6 +342,7 @@ export function AuthProvider({ children }) {
         userId: refreshedUserId,
         role: uiRole,
         walletAddress: persistedUser.walletAddress || previous.walletAddress,
+        encryptionPublicKey: previous.encryptionPublicKey || "",
         walletConnected: true,
         isAuthenticated: true,
         isAuthenticating: false,

@@ -25,7 +25,7 @@ export const ROLE_MENUS = {
     { label: "Wallet", path: "/holder/wallet" },
     { label: "Documents", path: "/holder/documents" },
     { label: "Credentials", path: "/holder/credentials" },
-    { label: "Proof Requests", path: "/holder/proof-requests" },
+    { label: "Verification Requests", path: "/holder/verification-requests" },
     { label: "Proof Builder", path: "/holder/proof-builder" },
     { label: "Revocation Status", path: "/holder/revocations" },
     { label: "Settings", path: "/holder/settings" }

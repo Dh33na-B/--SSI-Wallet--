@@ -1,5 +1,6 @@
 package SSI.Wallet.Identity.dto.holder;
 
+import java.util.List;
 import java.util.UUID;
 
 public record UploadDocumentRequest(
@@ -9,6 +10,7 @@ public record UploadDocumentRequest(
         String fileName,
         String ipfsCid,
         String encryptionIv,
-        String encryptedKey
+        String encryptedKey,
+        List<UploadDocumentRecipientKeyRequest> recipientKeys
 ) {
 }

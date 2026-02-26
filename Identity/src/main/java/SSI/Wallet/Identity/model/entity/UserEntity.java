@@ -47,6 +47,9 @@ public class UserEntity {
     @Column(name = "wallet_address", length = 100, nullable = false, unique = true)
     private String walletAddress;
 
+    @Column(name = "encryption_public_key", columnDefinition = "TEXT")
+    private String encryptionPublicKey;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "role", length = 20, nullable = false)
     private UserRole role;

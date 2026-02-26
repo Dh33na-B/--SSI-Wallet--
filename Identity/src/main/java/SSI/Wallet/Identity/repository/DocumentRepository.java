@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface DocumentRepository extends JpaRepository<DocumentEntity, UUID> {
 
+    List<DocumentEntity> findAllByOrderByUploadedAtDesc();
+
     List<DocumentEntity> findByUserId(UUID userId);
 
     List<DocumentEntity> findByUserIdOrderByUploadedAtDesc(UUID userId);
