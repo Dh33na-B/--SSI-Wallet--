@@ -4,6 +4,6 @@ import java.util.UUID;
 
 public record VerifyCredentialRequest(
         UUID verifierId,
-        String credentialId
+        UUID requestId
 ) {
 }

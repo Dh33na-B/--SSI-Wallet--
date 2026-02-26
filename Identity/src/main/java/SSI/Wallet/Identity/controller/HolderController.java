@@ -3,18 +3,19 @@ package SSI.Wallet.Identity.controller;
 import SSI.Wallet.Identity.dto.holder.AccessControlRequest;
 import SSI.Wallet.Identity.dto.holder.CreateDocumentTypeRequest;
 import SSI.Wallet.Identity.dto.holder.DocumentTypeResponse;
+import SSI.Wallet.Identity.dto.holder.HolderCredentialAccessResponse;
 import SSI.Wallet.Identity.dto.holder.HolderDocumentResponse;
 import SSI.Wallet.Identity.dto.holder.IssuerEncryptionKeyResponse;
 import SSI.Wallet.Identity.dto.holder.HolderReviewRequestResponse;
 import SSI.Wallet.Identity.dto.holder.RespondReviewRequest;
 import SSI.Wallet.Identity.dto.holder.ShareProofRequest;
 import SSI.Wallet.Identity.dto.holder.UploadDocumentRequest;
+import SSI.Wallet.Identity.dto.verifier.ProofRequestSummaryResponse;
 import SSI.Wallet.Identity.model.entity.CredentialEntity;
 import SSI.Wallet.Identity.model.entity.DocumentKeyEntity;
 import SSI.Wallet.Identity.model.entity.UserEntity;
 import SSI.Wallet.Identity.service.HolderService;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -88,9 +89,21 @@ public class HolderController {
         return ResponseEntity.ok(holderService.grantDocumentAccess(request));
     }
 
+    @GetMapping("/{holderId}/proof-requests")
+    public ResponseEntity<List<ProofRequestSummaryResponse>> getProofRequests(@PathVariable UUID holderId) {
+        return ResponseEntity.ok(holderService.getProofRequests(holderId));
+    }
+
+    @GetMapping("/{holderId}/credentials/{credentialId}/access")
+    public ResponseEntity<HolderCredentialAccessResponse> getCredentialAccess(
+            @PathVariable UUID holderId,
+            @PathVariable String credentialId
+    ) {
+        return ResponseEntity.ok(holderService.getCredentialAccess(holderId, credentialId));
+    }
+
     @PostMapping("/proof/share")
-    public ResponseEntity<Map<String, String>> shareProof(@RequestBody ShareProofRequest request) {
-        String result = holderService.shareSelectiveProof(request);
-        return ResponseEntity.ok(Map.of("message", result));
+    public ResponseEntity<ProofRequestSummaryResponse> shareProof(@RequestBody ShareProofRequest request) {
+        return ResponseEntity.ok(holderService.shareSelectiveProof(request));
     }
 }

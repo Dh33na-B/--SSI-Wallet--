@@ -3,6 +3,7 @@ package SSI.Wallet.Identity.service.impl;
 import SSI.Wallet.Identity.dto.holder.AccessControlRequest;
 import SSI.Wallet.Identity.dto.holder.CreateDocumentTypeRequest;
 import SSI.Wallet.Identity.dto.holder.DocumentTypeResponse;
+import SSI.Wallet.Identity.dto.holder.HolderCredentialAccessResponse;
 import SSI.Wallet.Identity.dto.holder.HolderDocumentResponse;
 import SSI.Wallet.Identity.dto.holder.HolderReviewRequestResponse;
 import SSI.Wallet.Identity.dto.holder.IssuerEncryptionKeyResponse;
@@ -12,6 +13,7 @@ import SSI.Wallet.Identity.dto.holder.UploadDocumentRequest;
 import SSI.Wallet.Identity.dto.holder.UploadDocumentRecipientKeyRequest;
 import SSI.Wallet.Identity.model.entity.AuditLogEntity;
 import SSI.Wallet.Identity.model.entity.CredentialEntity;
+import SSI.Wallet.Identity.model.entity.CredentialKeyEntity;
 import SSI.Wallet.Identity.model.entity.DocumentEntity;
 import SSI.Wallet.Identity.model.entity.DocumentKeyEntity;
 import SSI.Wallet.Identity.model.entity.DocumentReviewRequestEntity;
@@ -20,6 +22,7 @@ import SSI.Wallet.Identity.model.entity.UserEntity;
 import SSI.Wallet.Identity.model.enums.DocumentReviewRequestStatus;
 import SSI.Wallet.Identity.model.enums.UserRole;
 import SSI.Wallet.Identity.repository.AuditLogRepository;
+import SSI.Wallet.Identity.repository.CredentialKeyRepository;
 import SSI.Wallet.Identity.repository.CredentialRepository;
 import SSI.Wallet.Identity.repository.DocumentKeyRepository;
 import SSI.Wallet.Identity.repository.DocumentReviewRequestRepository;
@@ -27,6 +30,8 @@ import SSI.Wallet.Identity.repository.DocumentRepository;
 import SSI.Wallet.Identity.repository.DocumentTypeRepository;
 import SSI.Wallet.Identity.repository.UserRepository;
 import SSI.Wallet.Identity.service.HolderService;
+import SSI.Wallet.Identity.service.VerifierService;
+import SSI.Wallet.Identity.dto.verifier.ProofRequestSummaryResponse;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -43,10 +48,12 @@ public class HolderServiceImpl implements HolderService {
     private final UserRepository userRepository;
     private final DocumentRepository documentRepository;
     private final CredentialRepository credentialRepository;
+    private final CredentialKeyRepository credentialKeyRepository;
     private final DocumentKeyRepository documentKeyRepository;
     private final DocumentReviewRequestRepository documentReviewRequestRepository;
     private final DocumentTypeRepository documentTypeRepository;
     private final AuditLogRepository auditLogRepository;
+    private final VerifierService verifierService;
 
     @Override
     @Transactional(readOnly = true)
@@ -227,12 +234,53 @@ public class HolderServiceImpl implements HolderService {
     }
 
     @Override
-    public String shareSelectiveProof(ShareProofRequest request) {
+    @Transactional(readOnly = true)
+    public List<ProofRequestSummaryResponse> getProofRequests(UUID holderId) {
+        getHolderProfile(holderId);
+        return verifierService.getHolderRequests(holderId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public HolderCredentialAccessResponse getCredentialAccess(UUID holderId, String credentialId) {
+        UserEntity holder = getHolderProfile(holderId);
+        if (isBlank(credentialId)) {
+            throw new IllegalArgumentException("credentialId is required.");
+        }
+
+        CredentialEntity credential = credentialRepository.findByCredentialId(credentialId.trim())
+                .orElseThrow(() -> new IllegalArgumentException("Credential not found: " + credentialId));
+        ensureHolderOwnsCredential(holder, credential);
+
+        CredentialKeyEntity key = credentialKeyRepository
+                .findTopByCredentialIdAndRecipientUserIdOrderByCreatedAtDesc(credential.getId(), holder.getId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Holder encrypted credential key not found for credential: " + credentialId
+                ));
+
+        return new HolderCredentialAccessResponse(
+                credential.getCredentialId(),
+                credential.getVcIpfsCid(),
+                key.getEncryptedKey(),
+                credential.getVcHash(),
+                credential.getSignatureSuite(),
+                credential.getRevoked(),
+                credential.getIssuer() == null ? null : credential.getIssuer().getWalletAddress()
+        );
+    }
+
+    @Override
+    public ProofRequestSummaryResponse shareSelectiveProof(ShareProofRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Proof sharing request is required.");
+        }
         UserEntity holder = getHolderProfile(request.holderId());
+        ProofRequestSummaryResponse response = verifierService.processHolderProof(request);
+        createAuditLog(holder, "SHARE_PROOF", "VERIFICATION_REQUEST", String.valueOf(request.requestId()));
+        return response;
+    }
 
-        CredentialEntity credential = credentialRepository.findByCredentialId(request.credentialId())
-                .orElseThrow(() -> new IllegalArgumentException("Credential not found: " + request.credentialId()));
-
+    private void ensureHolderOwnsCredential(UserEntity holder, CredentialEntity credential) {
         UserEntity credentialHolder = credential.getHolder();
         if (credentialHolder == null && credential.getDocument() != null) {
             credentialHolder = credential.getDocument().getUser();
@@ -240,14 +288,9 @@ public class HolderServiceImpl implements HolderService {
         if (credentialHolder == null) {
             throw new IllegalArgumentException("Credential is not linked to a holder-owned document.");
         }
-
         if (!credentialHolder.getId().equals(holder.getId())) {
-            throw new IllegalArgumentException("Holder does not own credential: " + request.credentialId());
+            throw new IllegalArgumentException("Holder does not own credential: " + credential.getCredentialId());
         }
-
-        createAuditLog(holder, "SHARE_PROOF", "CREDENTIAL", request.credentialId());
-        return "Selective proof template generated for verifier " + request.verifierId()
-                + " with fields: " + request.requestedFields();
     }
 
     private DocumentTypeEntity resolveDocumentType(UploadDocumentRequest request, UserEntity holder) {

@@ -1,14 +1,12 @@
-import { base64, utf8 } from "@scure/base";
+import { base64 } from "@scure/base";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import nacl from "tweetnacl";
 import PageHeader from "../../components/ui/PageHeader";
 import SectionCard from "../../components/ui/SectionCard";
 import { useAuth } from "../../context/AuthContext";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
 const IPFS_GATEWAY = import.meta.env.VITE_IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs";
-const PINATA_UPLOAD_URL = "https://api.pinata.cloud/pinning/pinFileToIPFS";
 
 const normalizeApiError = async (response, fallbackMessage) => {
   let message = fallbackMessage;
@@ -26,16 +24,6 @@ const normalizeApiError = async (response, fallbackMessage) => {
 const bytesToHex = (bytes) =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 
-const bytesToBase64 = (bytes) => {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return window.btoa(binary);
-};
-
-const arrayBufferToBase64 = (buffer) => bytesToBase64(new Uint8Array(buffer));
-
 const utf8ToHex = (value) => bytesToHex(new TextEncoder().encode(value));
 
 const normalizeEncryptedPayloadForMetaMask = (value) => {
@@ -50,98 +38,6 @@ const normalizeEncryptedPayloadForMetaMask = (value) => {
     return utf8ToHex(trimmed);
   }
   return value;
-};
-
-const encryptForPublicKey = (publicKey, messageBase64) => {
-  const publicKeyBytes = base64.decode(publicKey);
-  const ephemeralKeyPair = nacl.box.keyPair();
-  const nonce = nacl.randomBytes(nacl.box.nonceLength);
-  const messageBytes = utf8.decode(messageBase64);
-  const ciphertext = nacl.box(messageBytes, nonce, publicKeyBytes, ephemeralKeyPair.secretKey);
-
-  return utf8ToHex(
-    JSON.stringify({
-      version: "x25519-xsalsa20-poly1305",
-      nonce: base64.encode(nonce),
-      ephemPublicKey: base64.encode(ephemeralKeyPair.publicKey),
-      ciphertext: base64.encode(ciphertext)
-    })
-  );
-};
-
-const sha256Hex = async (value) => {
-  const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return bytesToHex(new Uint8Array(digest));
-};
-
-const bbsPlusSignVc = async (unsignedVc, issuerId) => {
-  const canonical = JSON.stringify(unsignedVc);
-  const digest = await window.crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(`BBS_PLUS_SIGNATURE|${issuerId}|${canonical}`)
-  );
-  return bytesToBase64(new Uint8Array(digest));
-};
-
-const encryptSignedVc = async (signedVcJson) => {
-  const plainBytes = new TextEncoder().encode(signedVcJson);
-  const aesKey = await window.crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"]
-  );
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, plainBytes);
-  const exportedKey = await window.crypto.subtle.exportKey("raw", aesKey);
-
-  // Prefix IV into payload so VC can be decrypted without storing a separate IV column.
-  const encryptedBytes = new Uint8Array(encrypted);
-  const packed = new Uint8Array(iv.length + encryptedBytes.length);
-  packed.set(iv, 0);
-  packed.set(encryptedBytes, iv.length);
-
-  return {
-    encryptedBlob: new Blob([packed], { type: "application/octet-stream" }),
-    keyBase64: arrayBufferToBase64(exportedKey)
-  };
-};
-
-const uploadToPinata = async (encryptedBlob, fileName) => {
-  const jwt = import.meta.env.VITE_PINATA_JWT;
-  const apiKey = import.meta.env.VITE_PINATA_API_KEY;
-  const apiSecret = import.meta.env.VITE_PINATA_API_SECRET;
-
-  if (!jwt && (!apiKey || !apiSecret)) {
-    throw new Error(
-      "Pinata credentials are missing. Set VITE_PINATA_JWT or VITE_PINATA_API_KEY + VITE_PINATA_API_SECRET."
-    );
-  }
-
-  const formData = new FormData();
-  formData.append("file", encryptedBlob, fileName);
-  formData.append("pinataMetadata", JSON.stringify({ name: fileName }));
-
-  const headers = {};
-  if (jwt) {
-    headers.Authorization = `Bearer ${jwt}`;
-  } else {
-    headers.pinata_api_key = apiKey;
-    headers.pinata_secret_api_key = apiSecret;
-  }
-
-  const response = await fetch(PINATA_UPLOAD_URL, {
-    method: "POST",
-    headers,
-    body: formData
-  });
-  if (!response.ok) {
-    throw new Error(await normalizeApiError(response, "Pinata upload failed."));
-  }
-  const payload = await response.json();
-  if (!payload?.IpfsHash) {
-    throw new Error("Pinata response missing IpfsHash.");
-  }
-  return payload.IpfsHash;
 };
 
 const formatDateTime = (value) => {
@@ -454,42 +350,6 @@ export default function IssuerReviewPage() {
         throw new Error("Claims JSON is invalid.");
       }
 
-      const issuedAtIso = new Date().toISOString();
-      const unsignedVc = {
-        "@context": ["https://www.w3.org/2018/credentials/v1"],
-        id: vcCredentialId.trim(),
-        type: ["VerifiableCredential", vcSchema.trim() || "GenericCredential-v1"],
-        issuer: walletAddress || `did:ethr:${issuerId}`,
-        issuanceDate: issuedAtIso,
-        expirationDate: vcExpiresAt ? `${vcExpiresAt}T23:59:59` : null,
-        credentialSubject: {
-          id: access?.holderWallet || metadata?.holderWallet || "",
-          ...claims
-        }
-      };
-
-      const proofValue = await bbsPlusSignVc(unsignedVc, issuerId);
-      const signedVc = {
-        ...unsignedVc,
-        proof: {
-          type: "BbsBlsSignature2020",
-          created: issuedAtIso,
-          proofPurpose: "assertionMethod",
-          verificationMethod: `${walletAddress || issuerId}#bbs-key-1`,
-          proofValue
-        }
-      };
-
-      const signedVcJson = JSON.stringify(signedVc);
-      const vcHash = await sha256Hex(signedVcJson);
-      const blockchainTxHash = await sha256Hex(`${vcHash}|${Date.now()}|ANCHOR`);
-      const { encryptedBlob, keyBase64 } = await encryptSignedVc(signedVcJson);
-      const holderEncryptedKey = encryptForPublicKey(access.holderEncryptionPublicKey, keyBase64);
-      const vcIpfsCid = await uploadToPinata(
-        encryptedBlob,
-        `${vcCredentialId.trim().replace(/\s+/g, "_") || "credential"}.vc.enc`
-      );
-
       const response = await fetch(`${API_BASE_URL}/api/issuer/credentials`, {
         method: "POST",
         headers: {
@@ -499,20 +359,17 @@ export default function IssuerReviewPage() {
           issuerId,
           documentId,
           credentialId: vcCredentialId.trim(),
-          vcIpfsCid,
-          vcHash,
-          signatureSuite: signedVc.proof.type,
-          blockchainTxHash,
-          holderEncryptedKey,
+          vcSchema: vcSchema.trim() || "GenericCredential-v1",
+          claims,
           expiresAt: vcExpiresAt ? `${vcExpiresAt}T23:59:59` : null
         })
       });
       if (!response.ok) {
-        throw new Error(await normalizeApiError(response, "Could not store encrypted credential."));
+        throw new Error(await normalizeApiError(response, "Could not issue encrypted credential from backend."));
       }
       const saved = await response.json();
       setIssuedCredential(saved);
-      setMessage("Encrypted VC issued, anchored, and stored successfully.");
+      setMessage("VC signed, anchored, encrypted, uploaded, and stored by backend.");
     } catch (err) {
       setError(err.message || "VC issuance failed.");
     } finally {

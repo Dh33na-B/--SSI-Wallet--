@@ -1,6 +1,5 @@
-import { base64, utf8 } from "@scure/base";
-import { useCallback, useEffect, useState } from "react";
-import nacl from "tweetnacl";
+import { base64 } from "@scure/base";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Badge from "../../components/ui/Badge";
 import DataTable from "../../components/ui/DataTable";
 import Modal from "../../components/ui/Modal";
@@ -9,41 +8,45 @@ import SectionCard from "../../components/ui/SectionCard";
 import { useAuth } from "../../context/AuthContext";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+const BBS_SIGNER_BASE_URL = import.meta.env.VITE_BBS_SIGNER_BASE_URL || "http://localhost:8085";
+const BBS_SIGNER_AUTH_TOKEN = import.meta.env.VITE_BBS_SIGNER_AUTH_TOKEN || "";
+const IPFS_GATEWAY_BASE =
+  import.meta.env.VITE_IPFS_GATEWAY_BASE || "https://gateway.pinata.cloud/ipfs";
 
-const normalizeApiError = async (response, fallbackMessage) => {
-  let message = fallbackMessage;
+const parseApiError = async (response, fallback) => {
   try {
     const data = await response.json();
     if (data?.message) {
-      message = data.message;
+      return data.message;
     }
   } catch {
-    // ignore parse errors
+    // ignore
   }
-  return message;
+  return fallback;
 };
 
-const shortText = (value, max = 20) => {
-  if (!value) {
-    return "-";
+const normalizeClientError = (error, fallback = "Request failed.") => {
+  const message = String(error?.message || "").trim();
+  const lowered = message.toLowerCase();
+
+  if (
+    error?.code === 4001 ||
+    lowered.includes("user denied message decryption") ||
+    lowered.includes("metamask decryptmessage: user denied")
+  ) {
+    return "MetaMask decryption was denied. Click Review & Share again and approve the decrypt popup.";
   }
-  if (value.length <= max) {
-    return value;
+  if (lowered.includes("expected 112-byte bbs signature") || lowered.includes("invalid size of signature")) {
+    return "This VC does not contain a valid issuer BBS signature. Re-issue this credential from issuer side and retry.";
   }
-  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+  if (lowered.includes("derived proof, not an issuer signature")) {
+    return "This VC payload already contains a derived proof, not an issuer signature. Re-issue the VC and retry.";
+  }
+  return message || fallback;
 };
 
-const formatDateTime = (value) => {
-  if (!value) {
-    return "-";
-  }
-  return new Date(value).toLocaleString();
-};
-
-const bytesToHex = (bytes) =>
-  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-
-const utf8ToHex = (value) => bytesToHex(new TextEncoder().encode(value));
+const formatDateTime = (value) => (value ? new Date(value).toLocaleString() : "-");
+const short = (value) => (value && value.length > 22 ? `${value.slice(0, 10)}...${value.slice(-8)}` : value || "-");
 
 const normalizeEncryptedPayloadForMetaMask = (value) => {
   if (typeof value !== "string") {
@@ -54,288 +57,457 @@ const normalizeEncryptedPayloadForMetaMask = (value) => {
     return trimmed;
   }
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    return utf8ToHex(trimmed);
+    const bytes = new TextEncoder().encode(trimmed);
+    return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
   }
-  return value;
+  return trimmed;
 };
 
-const normalizeWalletError = (error) => {
-  const message = String(error?.message || "");
-  const lowered = message.toLowerCase();
+const decryptEncryptedVc = async (encryptedBlob, keyBase64) => {
+  const blob = encryptedBlob instanceof Uint8Array ? encryptedBlob : new Uint8Array(encryptedBlob);
+  if (blob.length <= 12) {
+    throw new Error("Encrypted VC payload is invalid.");
+  }
 
-  if (error?.code === 4001 || lowered.includes("user denied message decryption")) {
-    return "MetaMask decrypt was canceled. Click Accept again and approve the 'Decrypt message' popup.";
+  const keyBytes = base64.decode(keyBase64);
+  const iv = blob.slice(0, 12);
+  const ciphertext = blob.slice(12);
+  const cryptoKey = await window.crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, [
+    "decrypt"
+  ]);
+  const plaintext = await window.crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv
+    },
+    cryptoKey,
+    ciphertext
+  );
+  const signedCredentialText = new TextDecoder().decode(new Uint8Array(plaintext));
+  return JSON.parse(signedCredentialText);
+};
+
+const validateDecryptedVcKey = (rawKeyValue) => {
+  const keyValue = String(rawKeyValue || "").trim();
+  if (!keyValue) {
+    throw new Error("Decrypted VC key is empty.");
   }
-  if (lowered.includes("wallet account does not match")) {
-    return message;
+  let decoded = null;
+  try {
+    decoded = base64.decode(keyValue);
+  } catch {
+    throw new Error(
+      "Decrypted VC key is not valid base64. This credential was issued with an incompatible key envelope. Re-issue the credential."
+    );
   }
-  if (lowered.includes("metamask")) {
-    return message;
+  if (!(decoded instanceof Uint8Array) || decoded.length !== 32) {
+    throw new Error(
+      `Decrypted VC key length is ${decoded?.length || 0} bytes. Expected 32-byte AES-256 key. Re-issue the credential.`
+    );
   }
-  return message || "Failed to submit response.";
+  return keyValue;
+};
+
+const fetchEncryptedVcFromIpfs = async (cid) => {
+  const cleanCid = String(cid || "").trim();
+  if (!cleanCid) {
+    throw new Error("Credential CID is missing.");
+  }
+  const response = await fetch(`${IPFS_GATEWAY_BASE}/${cleanCid}`);
+  if (!response.ok) {
+    throw new Error("Could not fetch encrypted VC from IPFS.");
+  }
+  return new Uint8Array(await response.arrayBuffer());
+};
+
+const getActiveWallet = async () => {
+  if (!window.ethereum?.request) {
+    throw new Error("MetaMask is required.");
+  }
+  let accounts = await window.ethereum.request({ method: "eth_accounts" });
+  if (!accounts || accounts.length === 0) {
+    accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  }
+  const activeWallet = accounts?.[0];
+  if (!activeWallet) {
+    throw new Error("No MetaMask account selected.");
+  }
+  return activeWallet;
+};
+
+const deriveProofOnHolderSide = async (signedCredential, selectedFields) => {
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  if (BBS_SIGNER_AUTH_TOKEN) {
+    headers.Authorization = `Bearer ${BBS_SIGNER_AUTH_TOKEN}`;
+  }
+
+  const response = await fetch(`${BBS_SIGNER_BASE_URL}/v1/credentials/proof`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      signedCredential,
+      revealFields: selectedFields
+    })
+  });
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Could not generate BBS+ selective proof."));
+  }
+  return response.json();
+};
+
+const ensureDerivableSignedCredential = (signedCredential) => {
+  const proof = signedCredential?.proof;
+  if (!proof || typeof proof !== "object") {
+    throw new Error("Credential payload is missing issuer signature proof.");
+  }
+  const type = String(proof.type || "").trim();
+  if (type === "BbsBlsSignatureProof2020") {
+    throw new Error("Credential payload contains a derived proof, not issuer signature.");
+  }
+  if (!proof.proofValue || typeof proof.proofValue !== "string") {
+    throw new Error("Credential payload proofValue is missing.");
+  }
 };
 
 export default function HolderProofRequestsPage() {
   const { userId, walletAddress, refreshAuthSession } = useAuth();
   const [rows, setRows] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [decisionModal, setDecisionModal] = useState({
+  const [modal, setModal] = useState({
     open: false,
     request: null,
-    action: "",
-    note: "",
+    selectedFields: [],
+    signedCredential: null,
+    loadingCredential: false,
     submitting: false
   });
 
-  const fetchRequests = useCallback(async () => {
+  const resolveHolderId = useCallback(async () => {
     let holderId = userId || "";
     if (!holderId) {
       holderId = await refreshAuthSession();
     }
+    return holderId;
+  }, [refreshAuthSession, userId]);
+
+  const fetchRequests = useCallback(async () => {
+    const holderId = await resolveHolderId();
     if (!holderId) {
       setRows([]);
       return;
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/holder/${holderId}/review-requests`);
+    const response = await fetch(`${API_BASE_URL}/api/holder/${holderId}/proof-requests`);
     if (!response.ok) {
-      throw new Error(await normalizeApiError(response, "Could not load review notifications."));
+      throw new Error(await parseApiError(response, "Could not load proof requests."));
     }
+
     const data = await response.json();
-    setRows(Array.isArray(data) ? data : []);
-  }, [userId, refreshAuthSession]);
+    setRows(
+      (Array.isArray(data) ? data : []).map((item) => ({
+        id: item.requestId,
+        requestId: item.requestId,
+        credentialId: item.credentialId,
+        verifierWallet: item.verifierWallet || "-",
+        requestedFields: Array.isArray(item.requestedFields) ? item.requestedFields : [],
+        disclosedFields: Array.isArray(item.disclosedFields) ? item.disclosedFields : [],
+        status: item.status || "-",
+        verification: item.verificationStatus ? "VALID" : item.verificationStatus === false ? "INVALID" : "PENDING",
+        createdAt: formatDateTime(item.createdAt),
+        respondedAt: formatDateTime(item.respondedAt),
+        verifiedAt: formatDateTime(item.verifiedAt)
+      }))
+    );
+  }, [resolveHolderId]);
 
   useEffect(() => {
     const run = async () => {
-      setIsLoading(true);
+      setLoading(true);
       setError("");
       try {
         await fetchRequests();
       } catch (err) {
-        setError(err.message || "Failed to load review notifications.");
+        setError(err.message || "Could not load proof requests.");
       } finally {
-        setIsLoading(false);
+        setLoading(false);
       }
     };
     run();
   }, [fetchRequests]);
 
-  const encryptForIssuer = (issuerPublicKey, keyBase64) => {
-    const publicKeyBytes = base64.decode(issuerPublicKey);
-    const ephemeralKeyPair = nacl.box.keyPair();
-    const nonce = nacl.randomBytes(nacl.box.nonceLength);
-    const messageBytes = utf8.decode(keyBase64);
-    const ciphertext = nacl.box(messageBytes, nonce, publicKeyBytes, ephemeralKeyPair.secretKey);
+  const loadSignedCredential = async (requestRow) => {
+    const holderId = await resolveHolderId();
+    if (!holderId) {
+      throw new Error("Holder session not available.");
+    }
 
-    return utf8ToHex(JSON.stringify({
-      version: "x25519-xsalsa20-poly1305",
-      nonce: base64.encode(nonce),
-      ephemPublicKey: base64.encode(ephemeralKeyPair.publicKey),
-      ciphertext: base64.encode(ciphertext)
-    }));
+    const response = await fetch(
+      `${API_BASE_URL}/api/holder/${holderId}/credentials/${requestRow.credentialId}/access`
+    );
+    if (!response.ok) {
+      throw new Error(await parseApiError(response, "Could not fetch credential access details."));
+    }
+    const access = await response.json();
+
+    const activeWallet = await getActiveWallet();
+    if (walletAddress && walletAddress.toLowerCase() !== activeWallet.toLowerCase()) {
+      throw new Error(`Selected MetaMask account does not match logged-in holder (${walletAddress}).`);
+    }
+
+    const keyBase64 = await window.ethereum.request({
+      method: "eth_decrypt",
+      params: [normalizeEncryptedPayloadForMetaMask(access.encryptedKey), activeWallet]
+    });
+    const validatedKeyBase64 = validateDecryptedVcKey(keyBase64);
+
+    const encryptedVc = await fetchEncryptedVcFromIpfs(access.vcIpfsCid);
+    return decryptEncryptedVc(encryptedVc, validatedKeyBase64);
   };
 
-  const submitDecision = async () => {
-    const selected = decisionModal.request;
-    if (!selected) {
+  const openRequestModal = async (row) => {
+    setModal({
+      open: true,
+      request: row,
+      selectedFields: row.requestedFields,
+      signedCredential: null,
+      loadingCredential: true,
+      submitting: false
+    });
+    setError("");
+    setMessage("");
+
+    try {
+      const signedCredential = await loadSignedCredential(row);
+      ensureDerivableSignedCredential(signedCredential);
+      setModal((prev) => ({ ...prev, signedCredential, loadingCredential: false }));
+    } catch (err) {
+      setModal((prev) => ({ ...prev, loadingCredential: false }));
+      setError(normalizeClientError(err, "Could not decrypt and load signed credential."));
+    }
+  };
+
+  const closeModal = () => {
+    setModal({
+      open: false,
+      request: null,
+      selectedFields: [],
+      signedCredential: null,
+      loadingCredential: false,
+      submitting: false
+    });
+  };
+
+  const submitDecision = async (decline = false) => {
+    const requestRow = modal.request;
+    if (!requestRow) {
       return;
     }
 
-    let holderId = userId || "";
-    if (!holderId) {
-      holderId = await refreshAuthSession();
-    }
+    const holderId = await resolveHolderId();
     if (!holderId) {
       setError("Holder session not available.");
       return;
     }
 
-    const approved = decisionModal.action === "ACCEPT";
-
-    setDecisionModal((previous) => ({ ...previous, submitting: true }));
+    setModal((prev) => ({ ...prev, submitting: true }));
     setError("");
     setMessage("");
 
     try {
-      let encryptedKeyForIssuer = null;
+      let payload = {
+        holderId,
+        requestId: requestRow.requestId,
+        disclosedFields: [],
+        signedCredential: null,
+        proofValue: null,
+        proofNonce: null,
+        revealedClaims: null,
+        revealedMessages: []
+      };
+      let derivedOnHolder = false;
 
-      if (approved) {
-        if (!window.ethereum?.request) {
-          throw new Error("MetaMask is required to approve verification access.");
+      if (!decline) {
+        if (!modal.signedCredential) {
+          throw new Error("Signed credential is not loaded yet.");
         }
-        if (!walletAddress) {
-          throw new Error("Connect your wallet to approve document verification.");
-        }
-        if (!selected.holderEncryptedKey) {
-          throw new Error("Holder encrypted key not found for this document.");
-        }
-        if (!selected.issuerEncryptionPublicKey) {
-          throw new Error("Issuer encryption public key not available. Ask issuer to login again.");
-        }
-
-        let connectedAccounts = await window.ethereum.request({
-          method: "eth_accounts"
-        });
-        let activeWallet = connectedAccounts?.[0] || "";
-        if (!activeWallet) {
-          connectedAccounts = await window.ethereum.request({
-            method: "eth_requestAccounts"
-          });
-          activeWallet = connectedAccounts?.[0] || "";
-        }
-        if (!activeWallet) {
-          throw new Error("No MetaMask account selected.");
-        }
-        if (walletAddress.toLowerCase() !== activeWallet.toLowerCase()) {
-          throw new Error(
-            `Selected MetaMask account does not match the logged-in holder account (${walletAddress}).`
-          );
+        if (!modal.selectedFields || modal.selectedFields.length === 0) {
+          throw new Error("Select at least one field or click Decline.");
         }
 
-        const keyBase64 = await window.ethereum.request({
-          method: "eth_decrypt",
-          params: [normalizeEncryptedPayloadForMetaMask(selected.holderEncryptedKey), activeWallet]
-        });
-
-        encryptedKeyForIssuer = encryptForIssuer(selected.issuerEncryptionPublicKey, keyBase64);
+        let proof = null;
+        try {
+          proof = await deriveProofOnHolderSide(modal.signedCredential, modal.selectedFields);
+          derivedOnHolder = true;
+        } catch (proofErr) {
+          const deriveMessage = String(proofErr?.message || "").toLowerCase();
+          if (
+            deriveMessage.includes("signature") ||
+            deriveMessage.includes("derived proof") ||
+            deriveMessage.includes("proofvalue")
+          ) {
+            throw proofErr;
+          }
+          // Fallback: backend derives proof using signer service if frontend signer access is blocked.
+        }
+        payload = {
+          holderId,
+          requestId: requestRow.requestId,
+          disclosedFields: modal.selectedFields,
+          signedCredential: modal.signedCredential,
+          proofValue: proof?.proofValue || null,
+          proofNonce: proof?.nonce || null,
+          revealedClaims: proof?.revealedClaims || null,
+          revealedMessages: Array.isArray(proof?.revealedMessages) ? proof.revealedMessages : []
+        };
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/holder/review-requests/respond`, {
+      const response = await fetch(`${API_BASE_URL}/api/holder/proof/share`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          holderId,
-          requestId: selected.requestId,
-          approved,
-          encryptedKeyForIssuer,
-          note: decisionModal.note.trim() || null
-        })
+        body: JSON.stringify(payload)
       });
-
       if (!response.ok) {
-        throw new Error(await normalizeApiError(response, "Could not submit review response."));
+        throw new Error(await parseApiError(response, "Could not submit selective proof response."));
       }
 
       await fetchRequests();
       setMessage(
-        approved
-          ? "Access approved. Requester can now decrypt and view the document."
-          : "Request rejected."
+        decline
+          ? "Proof request declined."
+          : derivedOnHolder
+            ? "Selective disclosure proof generated on holder side and submitted to verifier."
+            : "Selected attributes submitted. Backend generated/verified proof because frontend signer access was unavailable."
       );
-      setDecisionModal({ open: false, request: null, action: "", note: "", submitting: false });
+      closeModal();
     } catch (err) {
-      setDecisionModal((previous) => ({ ...previous, submitting: false }));
-      setError(normalizeWalletError(err));
+      setError(normalizeClientError(err, "Could not submit proof response."));
+      setModal((prev) => ({ ...prev, submitting: false }));
     }
   };
 
-  const columns = [
-    { key: "requestId", header: "Request ID", render: (value) => shortText(value, 22) },
-    { key: "issuerWallet", header: "Requester Wallet", render: (value) => shortText(value, 22) },
-    { key: "fileName", header: "File Name", render: (value) => value || "-" },
-    { key: "documentType", header: "Type", render: (value) => value || "-" },
-    { key: "status", header: "Status", render: (value) => <Badge value={value} /> },
-    { key: "updatedAt", header: "Updated", render: (value) => formatDateTime(value) },
-    {
-      key: "actions",
-      header: "Actions",
-      render: (_, row) => {
-        if (row.status !== "REQUESTED") {
-          return <span className="login-muted">No action</span>;
-        }
-        return (
-          <div className="action-row">
-            <button
-              type="button"
-              className="btn btn--secondary"
-              onClick={() =>
-                setDecisionModal({ open: true, request: row, action: "ACCEPT", note: "", submitting: false })
-              }
-            >
-              Accept
+  const columns = useMemo(
+    () => [
+      { key: "requestId", header: "Request ID", render: (value) => short(value) },
+      { key: "credentialId", header: "Credential ID" },
+      { key: "verifierWallet", header: "Verifier", render: (value) => short(value) },
+      {
+        key: "requestedFields",
+        header: "Requested Fields",
+        render: (value) => (Array.isArray(value) && value.length > 0 ? value.join(", ") : "-")
+      },
+      { key: "status", header: "Request Status", render: (value) => <Badge value={value} /> },
+      { key: "verification", header: "Verification", render: (value) => <Badge value={value} /> },
+      { key: "createdAt", header: "Requested At" },
+      { key: "respondedAt", header: "Responded At" },
+      {
+        key: "action",
+        header: "Action",
+        render: (_, row) =>
+          row.status === "REQUESTED" ? (
+            <button type="button" className="btn btn--secondary" onClick={() => openRequestModal(row)}>
+              Review & Share
             </button>
-            <button
-              type="button"
-              className="btn btn--danger"
-              onClick={() =>
-                setDecisionModal({ open: true, request: row, action: "REJECT", note: "", submitting: false })
-              }
-            >
-              Reject
-            </button>
-          </div>
-        );
+          ) : (
+            <span className="login-muted">Completed</span>
+          )
       }
-    }
-  ];
+    ],
+    []
+  );
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="Document Access Approvals"
-        subtitle="Approve a request, confirm in MetaMask, then requester can decrypt for verification."
+        title="Verification Requests"
+        subtitle="Review verifier requests, choose fields, generate BBS+ selective proof, and submit."
       />
 
-      <SectionCard title="Incoming Verification Requests">
-        <p className="field-help">
-          When you click <strong>Accept</strong>, MetaMask will ask you to decrypt the document key. Approve that popup
-          to grant access.
-        </p>
-        {isLoading ? <p className="login-muted">Loading notifications...</p> : null}
+      <SectionCard title="Incoming Proof Requests">
+        {loading ? <p className="login-muted">Loading proof requests...</p> : null}
         {error ? <p className="login-error">{error}</p> : null}
         {message ? <p className="upload-success">{message}</p> : null}
         <DataTable columns={columns} rows={rows} />
       </SectionCard>
 
       <Modal
-        open={decisionModal.open}
-        title={`${decisionModal.action} Access Request`}
-        onClose={() => setDecisionModal({ open: false, request: null, action: "", note: "", submitting: false })}
+        open={modal.open}
+        title="Review Proof Request"
+        onClose={closeModal}
         footer={
           <>
-            <button
-              type="button"
-              className="btn btn--ghost"
-              onClick={() =>
-                setDecisionModal({ open: false, request: null, action: "", note: "", submitting: false })
-              }
-            >
+            <button type="button" className="btn btn--ghost" onClick={closeModal} disabled={modal.submitting}>
               Cancel
             </button>
             <button
               type="button"
-              className={decisionModal.action === "ACCEPT" ? "btn btn--primary" : "btn btn--danger"}
-              onClick={submitDecision}
-              disabled={decisionModal.submitting}
+              className="btn btn--danger"
+              onClick={() => submitDecision(true)}
+              disabled={modal.submitting}
             >
-              Confirm {decisionModal.action}
+              Decline
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => submitDecision(false)}
+              disabled={modal.submitting || modal.loadingCredential}
+            >
+              Generate & Share Proof
             </button>
           </>
         }
       >
         <p>
-          Request: <strong>{decisionModal.request?.requestId}</strong>
+          Request ID: <strong>{modal.request?.requestId || "-"}</strong>
         </p>
         <p>
-          Requester: <strong>{decisionModal.request?.issuerWallet || "-"}</strong>
+          Verifier: <strong>{modal.request?.verifierWallet || "-"}</strong>
         </p>
+        <p>
+          Credential: <strong>{modal.request?.credentialId || "-"}</strong>
+        </p>
+        <p>
+          Status: <Badge value={modal.request?.status || "-"} />
+        </p>
+
         <label className="field">
-          <span>Note (Optional)</span>
-          <textarea
-            placeholder="Add a note for issuer/audit trail..."
-            value={decisionModal.note}
-            onChange={(event) =>
-              setDecisionModal((previous) => ({
-                ...previous,
-                note: event.target.value
-              }))
-            }
-          />
+          <span>Select fields to disclose</span>
+          <div className="field-grid">
+            {(modal.request?.requestedFields || []).map((field) => (
+              <label key={field} className="field-chip">
+                <input
+                  type="checkbox"
+                  checked={modal.selectedFields.includes(field)}
+                  onChange={() =>
+                    setModal((prev) => ({
+                      ...prev,
+                      selectedFields: prev.selectedFields.includes(field)
+                        ? prev.selectedFields.filter((value) => value !== field)
+                        : [...prev.selectedFields, field]
+                    }))
+                  }
+                />
+                <span>{field}</span>
+              </label>
+            ))}
+          </div>
         </label>
+
+        {modal.loadingCredential ? (
+          <p className="login-muted">
+            Decrypting VC key with MetaMask and loading signed credential from IPFS...
+          </p>
+        ) : (
+          <p className="field-help">
+            Proof generation runs on the holder side using your signed VC and selected attributes only.
+          </p>
+        )}
       </Modal>
     </div>
   );

@@ -1,0 +1,35 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_24-ec06856fd3b6c6a456d8e82d127d12ab2f4c8f39",
+  "solcVersion": "0.8.24",
+  "solcLongVersion": "0.8.24+commit.e11b9ed9",
+  "userSourceNameMap": {
+    "contracts/CredentialRegistry.sol": "project/contracts/CredentialRegistry.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "shanghai",
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode",
+            "evm.deployedBytecode",
+            "evm.methodIdentifiers",
+            "metadata"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/CredentialRegistry.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\ncontract CredentialRegistry {\n    struct CredentialRecord {\n        bytes32 vcHash;\n        bool exists;\n        bool revoked;\n        uint256 anchoredAt;\n        uint256 revokedAt;\n    }\n\n    address public owner;\n    mapping(string => CredentialRecord) private credentials;\n\n    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);\n    event CredentialAnchored(\n        string indexed credentialId,\n        bytes32 indexed vcHash,\n        address indexed anchoredBy,\n        uint256 anchoredAt\n    );\n    event CredentialRevoked(\n        string indexed credentialId,\n        bytes32 indexed vcHash,\n        address indexed revokedBy,\n        uint256 revokedAt\n    );\n\n    error Unauthorized();\n    error InvalidCredentialId();\n    error InvalidVcHash();\n    error CredentialAlreadyAnchored();\n    error CredentialNotFound();\n    error CredentialAlreadyRevoked();\n    error InvalidOwner();\n\n    modifier onlyOwner() {\n        if (msg.sender != owner) revert Unauthorized();\n        _;\n    }\n\n    constructor() {\n        owner = msg.sender;\n    }\n\n    function transferOwnership(address newOwner) external onlyOwner {\n        if (newOwner == address(0)) revert InvalidOwner();\n        address previousOwner = owner;\n        owner = newOwner;\n        emit OwnershipTransferred(previousOwner, newOwner);\n    }\n\n    function anchorCredential(string calldata credentialId, bytes32 vcHash) external onlyOwner returns (bool) {\n        if (bytes(credentialId).length == 0) revert InvalidCredentialId();\n        if (vcHash == bytes32(0)) revert InvalidVcHash();\n\n        CredentialRecord storage record = credentials[credentialId];\n        if (record.exists) revert CredentialAlreadyAnchored();\n\n        record.vcHash = vcHash;\n        record.exists = true;\n        record.revoked = false;\n        record.anchoredAt = block.timestamp;\n        record.revokedAt = 0;\n\n        emit CredentialAnchored(credentialId, vcHash, msg.sender, block.timestamp);\n        return true;\n    }\n\n    function revokeCredential(string calldata credentialId) external onlyOwner returns (bool) {\n        if (bytes(credentialId).length == 0) revert InvalidCredentialId();\n\n        CredentialRecord storage record = credentials[credentialId];\n        if (!record.exists) revert CredentialNotFound();\n        if (record.revoked) revert CredentialAlreadyRevoked();\n\n        record.revoked = true;\n        record.revokedAt = block.timestamp;\n\n        emit CredentialRevoked(credentialId, record.vcHash, msg.sender, block.timestamp);\n        return true;\n    }\n\n    function isCredentialAnchored(string calldata credentialId) external view returns (bool) {\n        return credentials[credentialId].exists;\n    }\n\n    function isCredentialRevoked(string calldata credentialId) external view returns (bool) {\n        CredentialRecord storage record = credentials[credentialId];\n        return record.exists && record.revoked;\n    }\n\n    function getCredential(\n        string calldata credentialId\n    ) external view returns (bytes32 vcHash, bool anchored, bool revoked, uint256 anchoredAt, uint256 revokedAt) {\n        CredentialRecord storage record = credentials[credentialId];\n        return (record.vcHash, record.exists, record.revoked, record.anchoredAt, record.revokedAt);\n    }\n}\n"
+      }
+    }
+  }
+}

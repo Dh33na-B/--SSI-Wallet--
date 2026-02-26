@@ -169,11 +169,62 @@ CREATE TABLE IF NOT EXISTS proof_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     credential_id VARCHAR(150) NOT NULL REFERENCES credentials(credential_id) ON DELETE CASCADE,
     verifier_id UUID REFERENCES users(id),
+    verification_request_id UUID,
     verification_status BOOLEAN,
+    signature_valid BOOLEAN,
+    blockchain_anchored BOOLEAN,
+    blockchain_revoked BOOLEAN,
+    vc_hash_matches BOOLEAN,
+    revealed_fields TEXT,
+    notes TEXT,
     verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_proof_logs_credential ON proof_logs(credential_id);
+
+ALTER TABLE IF EXISTS proof_logs ADD COLUMN IF NOT EXISTS verification_request_id UUID;
+ALTER TABLE IF EXISTS proof_logs ADD COLUMN IF NOT EXISTS signature_valid BOOLEAN;
+ALTER TABLE IF EXISTS proof_logs ADD COLUMN IF NOT EXISTS blockchain_anchored BOOLEAN;
+ALTER TABLE IF EXISTS proof_logs ADD COLUMN IF NOT EXISTS blockchain_revoked BOOLEAN;
+ALTER TABLE IF EXISTS proof_logs ADD COLUMN IF NOT EXISTS vc_hash_matches BOOLEAN;
+ALTER TABLE IF EXISTS proof_logs ADD COLUMN IF NOT EXISTS revealed_fields TEXT;
+ALTER TABLE IF EXISTS proof_logs ADD COLUMN IF NOT EXISTS notes TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_proof_logs_request ON proof_logs(verification_request_id);
+
+-- ===============================
+-- VERIFICATION REQUESTS (Verifier <-> Holder selective disclosure flow)
+-- ===============================
+CREATE TABLE IF NOT EXISTS verification_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    credential_ref_id UUID NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
+    holder_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    verifier_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    requested_fields TEXT NOT NULL,
+    disclosed_fields TEXT,
+    purpose TEXT,
+    proof_value TEXT,
+    proof_nonce TEXT,
+    revealed_messages TEXT,
+    status VARCHAR(40) NOT NULL DEFAULT 'REQUESTED'
+        CHECK (status IN ('REQUESTED', 'VERIFIED_VALID', 'VERIFIED_INVALID', 'HOLDER_DECLINED')),
+    verification_status BOOLEAN,
+    signature_valid BOOLEAN,
+    blockchain_anchored BOOLEAN,
+    blockchain_revoked BOOLEAN,
+    vc_hash_matches BOOLEAN,
+    verification_message TEXT,
+    expires_at TIMESTAMP,
+    responded_at TIMESTAMP,
+    verified_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_verif_req_verifier ON verification_requests(verifier_id);
+CREATE INDEX IF NOT EXISTS idx_verif_req_holder ON verification_requests(holder_id);
+CREATE INDEX IF NOT EXISTS idx_verif_req_credential ON verification_requests(credential_ref_id);
+CREATE INDEX IF NOT EXISTS idx_verif_req_status ON verification_requests(status);
 
 -- ===============================
 -- AUDIT LOG TABLE

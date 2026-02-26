@@ -15,6 +15,7 @@ import SSI.Wallet.Identity.repository.DocumentTypeRepository;
 import SSI.Wallet.Identity.repository.ProofLogRepository;
 import SSI.Wallet.Identity.repository.RevocationHistoryRepository;
 import SSI.Wallet.Identity.repository.UserRepository;
+import SSI.Wallet.Identity.repository.VerificationRequestRepository;
 import SSI.Wallet.Identity.service.AuthService;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -42,6 +43,7 @@ public class AuthServiceImpl implements AuthService {
     private final RevocationHistoryRepository revocationHistoryRepository;
     private final ProofLogRepository proofLogRepository;
     private final AuditLogRepository auditLogRepository;
+    private final VerificationRequestRepository verificationRequestRepository;
 
     @Override
     public MetaMaskLoginResponse loginWithMetaMask(MetaMaskLoginRequest request) {
@@ -168,6 +170,7 @@ public class AuthServiceImpl implements AuthService {
         credentialRepository.clearDocumentByDocumentOwnerId(userId);
         documentRepository.deleteByUserId(userId);
         documentReviewRequestRepository.deleteByIssuerIdOrHolderId(userId, userId);
+        verificationRequestRepository.deleteByVerifierIdOrHolderId(userId, userId);
 
         documentKeyRepository.clearRecipientUserByUserId(userId);
         credentialRepository.clearIssuerByUserId(userId);

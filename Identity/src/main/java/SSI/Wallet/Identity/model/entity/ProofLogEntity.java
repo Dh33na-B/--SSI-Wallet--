@@ -31,7 +31,8 @@ import org.hibernate.annotations.CreationTimestamp;
 @Table(
         name = "proof_logs",
         indexes = {
-                @Index(name = "idx_proof_logs_credential", columnList = "credential_id")
+                @Index(name = "idx_proof_logs_credential", columnList = "credential_id"),
+                @Index(name = "idx_proof_logs_request", columnList = "verification_request_id")
         }
 )
 public class ProofLogEntity {
@@ -57,8 +58,33 @@ public class ProofLogEntity {
     )
     private UserEntity verifier;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(
+            name = "verification_request_id",
+            foreignKey = @ForeignKey(name = "fk_proof_logs_request")
+    )
+    private VerificationRequestEntity verificationRequest;
+
     @Column(name = "verification_status")
     private Boolean verificationStatus;
+
+    @Column(name = "signature_valid")
+    private Boolean signatureValid;
+
+    @Column(name = "blockchain_anchored")
+    private Boolean blockchainAnchored;
+
+    @Column(name = "blockchain_revoked")
+    private Boolean blockchainRevoked;
+
+    @Column(name = "vc_hash_matches")
+    private Boolean vcHashMatches;
+
+    @Column(name = "revealed_fields", columnDefinition = "TEXT")
+    private String revealedFields;
+
+    @Column(name = "notes", columnDefinition = "TEXT")
+    private String notes;
 
     @CreationTimestamp
     @Column(name = "verified_at", nullable = false, updatable = false)
