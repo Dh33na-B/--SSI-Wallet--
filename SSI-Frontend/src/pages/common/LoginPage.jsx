@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { HOME_BY_ROLE, ROLES } from "../../config/navigation";
 import { useAuth } from "../../context/AuthContext";
@@ -6,23 +6,27 @@ import { useAuth } from "../../context/AuthContext";
 const roleOptions = [ROLES.HOLDER, ROLES.ISSUER, ROLES.VERIFIER, ROLES.AUDITOR];
 
 export default function LoginPage() {
-  const [loading, setLoading] = useState(false);
-  const { role, setRole, connectWallet, walletConnected, walletAddress } = useAuth();
+  const {
+    role,
+    setRole,
+    walletAddress,
+    authError,
+    isAuthenticated,
+    isAuthenticating,
+    loginWithMetaMask,
+    clearAuthError
+  } = useAuth();
   const navigate = useNavigate();
 
-  const canContinue = useMemo(() => walletConnected && role, [walletConnected, role]);
-
-  const onConnect = async () => {
-    setLoading(true);
-    try {
-      await connectWallet();
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (isAuthenticated && role) {
+      navigate(HOME_BY_ROLE[role] || "/login", { replace: true });
     }
-  };
+  }, [isAuthenticated, role, navigate]);
 
-  const continueToWorkspace = () => {
-    navigate(HOME_BY_ROLE[role] || "/login");
+  const onLogin = async () => {
+    clearAuthError();
+    await loginWithMetaMask(role);
   };
 
   return (
@@ -36,12 +40,11 @@ export default function LoginPage() {
       </div>
 
       <section className="login-card">
-        <h2>Connect Wallet & Choose Role</h2>
-        <p className="login-muted">Use MetaMask in production. Demo fallback is enabled for local UI work.</p>
-
-        <button type="button" className="btn btn--primary btn--full" onClick={onConnect} disabled={loading}>
-          {walletConnected ? "Wallet Connected" : loading ? "Connecting..." : "Connect MetaMask"}
-        </button>
+        <h2>Login with MetaMask</h2>
+        <p className="login-muted">
+          Choose your role, then sign the login message in MetaMask to continue.
+          Wallet role is locked after first registration.
+        </p>
 
         {walletAddress ? <p className="login-wallet">Active Wallet: {walletAddress}</p> : null}
 
@@ -59,9 +62,16 @@ export default function LoginPage() {
           ))}
         </div>
 
-        <button type="button" className="btn btn--secondary btn--full" disabled={!canContinue} onClick={continueToWorkspace}>
-          Continue
+        <button
+          type="button"
+          className="btn btn--primary btn--full"
+          disabled={!role || isAuthenticating}
+          onClick={onLogin}
+        >
+          {isAuthenticating ? "Waiting for MetaMask Signature..." : "Login with MetaMask"}
         </button>
+
+        {authError ? <p className="login-error">{authError}</p> : null}
       </section>
     </div>
   );

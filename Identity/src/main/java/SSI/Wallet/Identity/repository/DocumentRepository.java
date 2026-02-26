@@ -11,4 +11,6 @@ public interface DocumentRepository extends JpaRepository<DocumentEntity, UUID> 
     List<DocumentEntity> findByUserId(UUID userId);
 
     List<DocumentEntity> findByStatus(DocumentStatus status);
+
+    long deleteByUserId(UUID userId);
 }

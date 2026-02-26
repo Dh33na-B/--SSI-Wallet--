@@ -4,13 +4,13 @@ import SectionCard from "../../components/ui/SectionCard";
 import { useAuth } from "../../context/AuthContext";
 
 export default function HolderWalletPage() {
-  const { walletAddress, walletConnected, connectWallet } = useAuth();
+  const { role, walletAddress, walletConnected, loginWithMetaMask, removeMetaMaskAccount } = useAuth();
   const [busy, setBusy] = useState(false);
 
   const reconnect = async () => {
     setBusy(true);
     try {
-      await connectWallet();
+      await loginWithMetaMask(role || "HOLDER");
     } finally {
       setBusy(false);
     }
@@ -30,10 +30,13 @@ export default function HolderWalletPage() {
           </p>
           <div className="action-row">
             <button type="button" className="btn btn--primary" onClick={reconnect} disabled={busy}>
-              {busy ? "Connecting..." : "Reconnect MetaMask"}
+              {busy ? "Signing..." : "Reconnect MetaMask"}
             </button>
             <button type="button" className="btn btn--ghost">
               Refresh Signature
+            </button>
+            <button type="button" className="btn btn--danger" onClick={removeMetaMaskAccount}>
+              Remove MetaMask Account
             </button>
           </div>
         </div>

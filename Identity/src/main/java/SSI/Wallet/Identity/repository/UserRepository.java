@@ -10,5 +10,7 @@ public interface UserRepository extends JpaRepository<UserEntity, UUID> {
 
     Optional<UserEntity> findByWalletAddress(String walletAddress);
 
+    Optional<UserEntity> findByWalletAddressIgnoreCase(String walletAddress);
+
     Optional<UserEntity> findByIdAndRole(UUID id, UserRole role);
 }

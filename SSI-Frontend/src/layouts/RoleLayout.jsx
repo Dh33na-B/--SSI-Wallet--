@@ -14,8 +14,12 @@ function MenuItem({ item }) {
 }
 
 export default function RoleLayout({ role }) {
-  const { walletAddress, disconnectWallet } = useAuth();
+  const { walletAddress, chainId, disconnectWallet, removeMetaMaskAccount } = useAuth();
   const menu = ROLE_MENUS[role] || [];
+  const shortAddress =
+    walletAddress && walletAddress.length > 12
+      ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
+      : walletAddress;
 
   return (
     <div className="app-shell">
@@ -38,11 +42,17 @@ export default function RoleLayout({ role }) {
         <header className="topbar">
           <div className="topbar-meta">
             <span className="role-pill">{ROLE_LABELS[role]}</span>
-            <span className="wallet-pill">Wallet: {walletAddress || "Not connected"}</span>
+            <span className="wallet-pill">Wallet: {shortAddress || "Not connected"}</span>
+            {chainId ? <span className="wallet-pill">Chain: {chainId}</span> : null}
           </div>
-          <button type="button" className="btn btn--danger" onClick={disconnectWallet}>
-            Disconnect
-          </button>
+          <div className="action-row">
+            <button type="button" className="btn btn--ghost" onClick={removeMetaMaskAccount}>
+              Remove MetaMask Account
+            </button>
+            <button type="button" className="btn btn--danger" onClick={disconnectWallet}>
+              Logout
+            </button>
+          </div>
         </header>
 
         <main className="content-area">

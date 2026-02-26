@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface CredentialRepository extends JpaRepository<CredentialEntity, UUID> {
 
@@ -15,4 +18,12 @@ public interface CredentialRepository extends JpaRepository<CredentialEntity, UU
     List<CredentialEntity> findByIssuerId(UUID issuerId);
 
     List<CredentialEntity> findByRevoked(Boolean revoked);
+
+    @Modifying
+    @Query("update CredentialEntity c set c.issuer = null where c.issuer.id = :userId")
+    int clearIssuerByUserId(@Param("userId") UUID userId);
+
+    @Modifying
+    @Query("update CredentialEntity c set c.document = null where c.document.user.id = :userId")
+    int clearDocumentByDocumentOwnerId(@Param("userId") UUID userId);
 }

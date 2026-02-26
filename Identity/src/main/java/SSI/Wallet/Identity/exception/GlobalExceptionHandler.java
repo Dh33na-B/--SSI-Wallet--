@@ -20,6 +20,8 @@ public class GlobalExceptionHandler {
         HttpStatus status = HttpStatus.BAD_REQUEST;
         if (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("not found")) {
             status = HttpStatus.NOT_FOUND;
+        } else if (ex.getMessage() != null && ex.getMessage().toLowerCase().contains("role mismatch")) {
+            status = HttpStatus.FORBIDDEN;
         }
 
         ApiError error = new ApiError(

@@ -34,16 +34,16 @@ import VerifierRequestsPage from "./pages/verifier/VerifierRequestsPage";
 import VerifierVerifyPage from "./pages/verifier/VerifierVerifyPage";
 
 function HomeRedirect() {
-  const { role, walletConnected } = useAuth();
-  if (!walletConnected || !role) {
+  const { role, isAuthenticated } = useAuth();
+  if (!isAuthenticated || !role) {
     return <Navigate to="/login" replace />;
   }
   return <Navigate to={HOME_BY_ROLE[role]} replace />;
 }
 
 function RoleGuard({ expectedRole, children }) {
-  const { role, walletConnected } = useAuth();
-  if (!walletConnected) {
+  const { role, isAuthenticated } = useAuth();
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
   if (role !== expectedRole) {
