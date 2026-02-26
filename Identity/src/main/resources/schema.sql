@@ -16,12 +16,39 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_wallet ON users(wallet_address);
 
 -- ===============================
+-- DOCUMENT TYPES TABLE
+-- ===============================
+CREATE TABLE IF NOT EXISTS document_types (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) UNIQUE NOT NULL,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_types_name ON document_types(name);
+
+INSERT INTO document_types (name)
+VALUES ('Passport')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO document_types (name)
+VALUES ('Degree Certificate')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO document_types (name)
+VALUES ('Address Proof')
+ON CONFLICT (name) DO NOTHING;
+
+-- ===============================
 -- DOCUMENTS TABLE (IPFS Storage)
 -- ===============================
 CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    document_type_id UUID REFERENCES document_types(id),
+    file_name VARCHAR(255),
     ipfs_cid TEXT NOT NULL,
+    encryption_iv TEXT,
     status VARCHAR(20) DEFAULT 'PENDING'
         CHECK (status IN ('PENDING', 'VERIFIED', 'REJECTED')),
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -29,6 +56,12 @@ CREATE TABLE IF NOT EXISTS documents (
 
 CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+
+-- Keep existing databases in sync when table already exists
+ALTER TABLE IF EXISTS documents ADD COLUMN IF NOT EXISTS document_type_id UUID;
+ALTER TABLE IF EXISTS documents ADD COLUMN IF NOT EXISTS file_name VARCHAR(255);
+ALTER TABLE IF EXISTS documents ADD COLUMN IF NOT EXISTS encryption_iv TEXT;
+CREATE INDEX IF NOT EXISTS idx_documents_type ON documents(document_type_id);
 
 -- ===============================
 -- DOCUMENT KEYS TABLE (Supports Multi-Recipient)

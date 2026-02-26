@@ -1,7 +1,11 @@
 package SSI.Wallet.Identity.controller;
 
 import SSI.Wallet.Identity.dto.holder.AccessControlRequest;
+import SSI.Wallet.Identity.dto.holder.CreateDocumentTypeRequest;
+import SSI.Wallet.Identity.dto.holder.DocumentTypeResponse;
+import SSI.Wallet.Identity.dto.holder.HolderDocumentResponse;
 import SSI.Wallet.Identity.dto.holder.ShareProofRequest;
+import SSI.Wallet.Identity.dto.holder.UploadDocumentRequest;
 import SSI.Wallet.Identity.model.entity.CredentialEntity;
 import SSI.Wallet.Identity.model.entity.DocumentKeyEntity;
 import SSI.Wallet.Identity.model.entity.UserEntity;
@@ -33,6 +37,30 @@ public class HolderController {
     @GetMapping("/{holderId}/credentials")
     public ResponseEntity<List<CredentialEntity>> getCredentials(@PathVariable UUID holderId) {
         return ResponseEntity.ok(holderService.getHolderCredentials(holderId));
+    }
+
+    @GetMapping("/{holderId}/documents")
+    public ResponseEntity<List<HolderDocumentResponse>> getDocuments(@PathVariable UUID holderId) {
+        return ResponseEntity.ok(holderService.getHolderDocuments(holderId));
+    }
+
+    @GetMapping("/document-types")
+    public ResponseEntity<List<DocumentTypeResponse>> getDocumentTypes() {
+        return ResponseEntity.ok(holderService.getDocumentTypes());
+    }
+
+    @PostMapping("/document-types")
+    public ResponseEntity<DocumentTypeResponse> createDocumentType(
+            @RequestBody CreateDocumentTypeRequest request
+    ) {
+        return ResponseEntity.ok(holderService.createDocumentType(request));
+    }
+
+    @PostMapping("/documents/upload")
+    public ResponseEntity<HolderDocumentResponse> uploadDocument(
+            @RequestBody UploadDocumentRequest request
+    ) {
+        return ResponseEntity.ok(holderService.uploadEncryptedDocument(request));
     }
 
     @PostMapping("/access")

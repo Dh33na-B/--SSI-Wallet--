@@ -35,7 +35,8 @@ import org.hibernate.annotations.CreationTimestamp;
         name = "documents",
         indexes = {
                 @Index(name = "idx_documents_user", columnList = "user_id"),
-                @Index(name = "idx_documents_status", columnList = "status")
+                @Index(name = "idx_documents_status", columnList = "status"),
+                @Index(name = "idx_documents_type", columnList = "document_type_id")
         }
 )
 public class DocumentEntity {
@@ -53,8 +54,21 @@ public class DocumentEntity {
     )
     private UserEntity user;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(
+            name = "document_type_id",
+            foreignKey = @ForeignKey(name = "fk_documents_type")
+    )
+    private DocumentTypeEntity documentType;
+
+    @Column(name = "file_name", length = 255)
+    private String fileName;
+
     @Column(name = "ipfs_cid", nullable = false, columnDefinition = "TEXT")
     private String ipfsCid;
+
+    @Column(name = "encryption_iv", columnDefinition = "TEXT")
+    private String encryptionIv;
 
     @Builder.Default
     @Enumerated(EnumType.STRING)

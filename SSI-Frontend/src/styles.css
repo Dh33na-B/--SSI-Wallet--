@@ -417,6 +417,22 @@ textarea {
   font-size: 14px;
 }
 
+.field-help {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.upload-success {
+  margin-bottom: 10px;
+  color: var(--success);
+  font-size: 13px;
+  background: #ecfff5;
+  border: 1px solid #c4efd8;
+  border-radius: 10px;
+  padding: 10px;
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

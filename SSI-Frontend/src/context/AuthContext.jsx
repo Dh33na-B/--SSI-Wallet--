@@ -267,6 +267,82 @@ export function AuthProvider({ children }) {
     }
   }, [auth.walletAddress, disconnectWallet, persist]);
 
+  const refreshAuthSession = useCallback(async () => {
+    const current = auth;
+
+    if (
+      !current.walletAddress ||
+      !current.role ||
+      !current.signature ||
+      !current.authMessage ||
+      !current.nonce
+    ) {
+      return "";
+    }
+
+    persist((previous) => ({
+      ...previous,
+      isAuthenticating: true,
+      authError: ""
+    }));
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/metamask/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          walletAddress: current.walletAddress,
+          role: current.role,
+          signature: current.signature,
+          message: current.authMessage,
+          chainId: current.chainId || "",
+          nonce: current.nonce,
+          loginAt: current.loginAt || new Date().toISOString()
+        })
+      });
+
+      if (!response.ok) {
+        let backendMessage = "Session refresh failed.";
+        try {
+          const errorData = await response.json();
+          if (errorData?.message) {
+            backendMessage = errorData.message;
+          }
+        } catch {
+          // ignore parse failures and keep default message
+        }
+        throw new Error(backendMessage);
+      }
+
+      const persistedUser = await response.json();
+      const backendRole = String(persistedUser.role || "").toUpperCase();
+      const uiRole = backendRole === "USER" ? "HOLDER" : backendRole || current.role;
+      const refreshedUserId = persistedUser.userId || current.userId || "";
+
+      persist((previous) => ({
+        ...previous,
+        userId: refreshedUserId,
+        role: uiRole,
+        walletAddress: persistedUser.walletAddress || previous.walletAddress,
+        walletConnected: true,
+        isAuthenticated: true,
+        isAuthenticating: false,
+        authError: ""
+      }));
+
+      return refreshedUserId;
+    } catch (error) {
+      persist((previous) => ({
+        ...previous,
+        isAuthenticating: false,
+        authError: getErrorMessage(error)
+      }));
+      return "";
+    }
+  }, [auth, persist]);
+
   useEffect(() => {
     if (!window.ethereum?.on) {
       return undefined;
@@ -322,11 +398,20 @@ export function AuthProvider({ children }) {
       ...auth,
       setRole,
       loginWithMetaMask,
+      refreshAuthSession,
       clearAuthError,
       disconnectWallet,
       removeMetaMaskAccount
     }),
-    [auth, setRole, loginWithMetaMask, clearAuthError, disconnectWallet, removeMetaMaskAccount]
+    [
+      auth,
+      setRole,
+      loginWithMetaMask,
+      refreshAuthSession,
+      clearAuthError,
+      disconnectWallet,
+      removeMetaMaskAccount
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
