@@ -42,6 +42,9 @@ const normalizeClientError = (error, fallback = "Request failed.") => {
   if (lowered.includes("derived proof, not an issuer signature")) {
     return "This VC payload already contains a derived proof, not an issuer signature. Re-issue the VC and retry.";
   }
+  if (lowered.includes("bbs signer unauthorized") || lowered === "unauthorized") {
+    return "BBS signer authorization failed. Restart services so backend/signer/frontend share the same BBS_SIGNER_AUTH_TOKEN.";
+  }
   return message || fallback;
 };
 

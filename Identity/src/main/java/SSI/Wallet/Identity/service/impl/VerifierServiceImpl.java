@@ -425,6 +425,11 @@ public class VerifierServiceImpl implements VerifierService {
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() >= 300) {
                 String apiMessage = readApiMessage(response.body());
+                if (response.statusCode() == 401) {
+                    throw new IllegalArgumentException(
+                            "BBS signer unauthorized. Ensure BBS_SIGNER_AUTH_TOKEN matches signer service."
+                    );
+                }
                 throw new IllegalArgumentException(isBlank(apiMessage) ? fallbackMessage : apiMessage);
             }
             return objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {
